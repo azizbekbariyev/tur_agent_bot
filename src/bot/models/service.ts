@@ -1,4 +1,5 @@
-import { Column, Entity, PrimaryGeneratedColumn } from 'typeorm';
+import { Column, Entity, OneToMany, PrimaryGeneratedColumn } from 'typeorm';
+import { CashService } from './cash_service';
 
 @Entity('service')
 export class Service {
@@ -19,4 +20,7 @@ export class Service {
     default: () => 'CURRENT_TIMESTAMP',
   })
   created_at!: Date;
+
+  @OneToMany(() => CashService, (cashService) => cashService.service)
+  cashes!: CashService[];
 }

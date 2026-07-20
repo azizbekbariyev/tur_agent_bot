@@ -5,6 +5,8 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { BOT_NAME } from './app.constants';
 import { BotModule } from './bot/bot.module';
 import { ConfigModule } from '@nestjs/config';
+import { CashModule } from './cash/cash.module';
+import { AuthModule } from './auth/auth.module';
 
 @Module({
   imports: [
@@ -32,6 +34,8 @@ import { ConfigModule } from '@nestjs/config';
       dropSchema: false,
     }),
     BotModule,
+    CashModule,
+    AuthModule,
   ],
   controllers: [],
   providers: [],
