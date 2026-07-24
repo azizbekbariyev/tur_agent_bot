@@ -71,9 +71,17 @@ export class BotService {
       where: { telegram_id: ctx.from!.id },
     });
 
-    if (user) {
+    if (user && user.status) {
       const token = await this.generateToken(user);
-      await ctx.reply(`Token: ${token}`);
+      await ctx.reply(
+        `Hurmatli foydalanuvchi, xizmatlardan foydalanish uchun quyidagi tugmani bosing.`,
+        Markup.inlineKeyboard([
+          Markup.button.webApp(
+            '🚀 Mini Appni ochish',
+            'https://tur-agent.test-prava.uz/?token=' + token,
+          ),
+        ]),
+      );
       return;
     } else if (ctx.from!.id == Number(process.env.ADMIN)) {
       const newUser = await this.userRepository.save({
@@ -90,7 +98,7 @@ export class BotService {
         id: newUser.id,
       });
       await ctx.reply(
-        `Hurmatli admin, xizmatlardan foydalanish uchun quyidagi tugmani bosing. + ${token}`,
+        `Hurmatli admin, xizmatlardan foydalanish uchun quyidagi tugmani bosing.`,
         Markup.inlineKeyboard([
           Markup.button.webApp(
             '🚀 Mini Appni ochish',
@@ -99,6 +107,17 @@ export class BotService {
         ]),
       );
     }
+
+    await this.userRepository.save({
+      telegram_id: ctx.from!.id,
+      username: ctx.from!.username,
+      first_name: ctx.from!.first_name,
+      last_name: ctx.from!.last_name,
+      type: 'USER',
+      status: false,
+    });
+
+    await ctx.reply('Siz hali aktiv emassiz');
   }
 
   async generateToken(user: { telegram_id: number; type: string; id: number }) {

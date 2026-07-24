@@ -10,7 +10,10 @@ async function start() {
     const PORT = process.env.PORT || 3030;
     const app = await NestFactory.create<NestExpressApplication>(AppModule);
 
-    const allowedOrigins = ['http://localhost:5173'];
+    const allowedOrigins = [
+      'https://tur-agent.test-prava.uz',
+      'http://localhost:5173',
+    ];
 
     app.enableCors({
       origin: (origin, callback) => {
