@@ -18,7 +18,7 @@ jobs:
           key: ${{ secrets.VPS_SSH_KEY }}
           port: 22
           script: |
-            cd /var/www/miniapp/tur_agent_bot_back
+            cd tur_agent_bot
 
             git fetch origin
             git reset --hard origin/main
