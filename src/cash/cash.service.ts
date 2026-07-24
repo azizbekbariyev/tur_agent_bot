@@ -82,7 +82,7 @@ export class CashService {
     @InjectRepository(User) private readonly userRepository: Repository<User>,
     private readonly dataSource: DataSource,
     private readonly botService: BotService,
-  ) {}
+  ) { }
 
   async getDashboard(user: UserReq, dto: DashboardFilterDto) {
     const where: any = {
@@ -176,8 +176,8 @@ export class CashService {
           }),
           ...(dto.status &&
             dto.status !== 'ALL' && {
-              status: dto.status,
-            }),
+            status: dto.status,
+          }),
         },
         relations: {
           services: true,
@@ -467,6 +467,11 @@ export class CashService {
             if (before) {
               pushHistory(`service #${s.id} name`, before.name, s.name);
               pushHistory(
+                `service #${s.id} company_name`,
+                before.company_name,
+                s.company_name,
+              );
+              pushHistory(
                 `service #${s.id} amount`,
                 before.amount,
                 s.amount.toFixed(2),
@@ -477,6 +482,7 @@ export class CashService {
               { id: s.id, cash: { id } },
               {
                 name: s.name,
+                company_name: s.company_name,
                 amount: s.amount.toFixed(2),
                 code: s.code,
               },
@@ -484,6 +490,7 @@ export class CashService {
           } else {
             const created = serviceRepo.create({
               name: s.name,
+              company_name: s.company_name ?? '',
               amount: s.amount.toFixed(2),
               code: s.code ?? '',
               cash,
@@ -492,7 +499,7 @@ export class CashService {
             pushHistory(
               `service #${saved.id} qo'shildi`,
               '—',
-              `${saved.name} / ${saved.amount}`,
+              `${saved.company_name ? saved.company_name + ' — ' : ''}${saved.name} / ${saved.amount}`,
             );
           }
         }
@@ -677,7 +684,7 @@ export class CashService {
           id,
         },
         {
-          status: body.isActive == 'INACTIVE' ? false : true,
+          status: body.status == 'INACTIVE' ? false : true,
         },
       );
     } else if (user.role == 'ADMIN') {
@@ -689,7 +696,7 @@ export class CashService {
           first_name: body.firstName,
           last_name: body.lastName,
           type: body.role,
-          status: body.isActive == 'INACTIVE' ? false : true,
+          status: body.status == 'INACTIVE' ? false : true,
           phone_number: body.phoneNumber,
           telegram_id: Number(body.telegramId),
         },

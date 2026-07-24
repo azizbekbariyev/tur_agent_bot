@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Ctx, InjectBot } from 'nestjs-telegraf';
 import { BOT_NAME } from 'src/app.constants';
-import { Context, Telegraf } from 'telegraf';
+import { Context, Markup, Telegraf } from 'telegraf';
 import { User } from './models/user';
 import { Repository } from 'typeorm';
 import { JwtService } from '@nestjs/jwt';
@@ -64,7 +64,7 @@ export class BotService {
     @InjectRepository(Notification)
     private readonly notificationRepository: Repository<Notification>,
     private readonly jwtService: JwtService,
-  ) { }
+  ) {}
 
   async start(@Ctx() ctx: Context) {
     const user = await this.userRepository.findOne({
@@ -73,27 +73,32 @@ export class BotService {
 
     if (user) {
       const token = await this.generateToken(user);
-      if (user.type === 'EMPLOYEE') {
-        await ctx.reply(`Employee + ${token}`);
-      } else {
-        await ctx.reply(`Admin + ${token}`);
-      }
+      await ctx.reply(`Token: ${token}`);
       return;
-    }
-    const newUser = await this.userRepository.save({
-      telegram_id: ctx.from!.id,
-      username: ctx.from!.username,
-      first_name: ctx.from!.first_name,
-      last_name: ctx.from!.last_name,
-      type: 'EMPLOYEE',
-    });
+    } else if (ctx.from!.id == Number(process.env.ADMIN)) {
+      const newUser = await this.userRepository.save({
+        telegram_id: ctx.from!.id,
+        username: ctx.from!.username,
+        first_name: ctx.from!.first_name,
+        last_name: ctx.from!.last_name,
+        type: 'EMPLOYEE',
+      });
 
-    const token = await this.generateToken({
-      telegram_id: ctx.from!.id,
-      type: 'EMPLOYEE',
-      id: newUser.id,
-    });
-    await ctx.reply(`Employee + ${token}`);
+      const token = await this.generateToken({
+        telegram_id: ctx.from!.id,
+        type: 'EMPLOYEE',
+        id: newUser.id,
+      });
+      await ctx.reply(
+        `Hurmatli admin, xizmatlardan foydalanish uchun quyidagi tugmani bosing. + ${token}`,
+        Markup.inlineKeyboard([
+          Markup.button.webApp(
+            '🚀 Mini Appni ochish',
+            'https://tur-agent.test-prava.uz/?token=' + token,
+          ),
+        ]),
+      );
+    }
   }
 
   async generateToken(user: { telegram_id: number; type: string; id: number }) {

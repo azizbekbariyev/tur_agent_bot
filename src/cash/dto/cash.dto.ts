@@ -97,7 +97,7 @@ export class UpdateUserDto {
   role!: string;
 
   @IsBoolean()
-  isActive!: string;
+  status!: string;
 
   @IsString()
   telegramId!: string;
@@ -144,6 +144,9 @@ export class UpdateServiceDto {
   @IsOptional()
   @IsInt()
   id?: number;
+
+  @IsString()
+  company_name!: string;
 
   @IsString()
   name!: string;

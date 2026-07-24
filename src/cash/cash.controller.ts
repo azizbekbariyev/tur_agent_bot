@@ -100,7 +100,7 @@ export class CashController {
   }
 
   @Get('user/me')
-  async getMe(@Req() req: Request) {
+  getMe(@Req() req: Request) {
     return this.cashService.getMe(req.user);
   }
 
