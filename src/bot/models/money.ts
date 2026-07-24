@@ -1,5 +1,11 @@
-import { Column, Entity, OneToMany, PrimaryGeneratedColumn } from 'typeorm';
-import { PassengerCashMoney } from './passanger_cash_money';
+import {
+  Column,
+  Entity,
+  JoinColumn,
+  ManyToOne,
+  PrimaryGeneratedColumn,
+} from 'typeorm';
+import { Cash } from './cash';
 
 @Entity('money')
 export class Money {
@@ -13,23 +19,24 @@ export class Money {
   //turi naqt, karta yoki o'tkazma orqali
   @Column({
     type: 'enum',
-    enum: ['cash', 'card', 'transfer'],
+    enum: ['CASH', 'CARD', 'TRANSFER'],
   })
   type!: string;
 
   //valyuta
   @Column({
     type: 'enum',
-    enum: ['uzs', 'usd', 'eur'],
+    enum: ['UZS', 'USD', 'EUR'],
   })
   currency!: string;
+
+  @ManyToOne(() => Cash, (cash) => cash.moneys)
+  @JoinColumn({ name: 'cash_id' })
+  cash!: Cash;
 
   @Column({
     type: 'timestamp',
     default: () => 'CURRENT_TIMESTAMP',
   })
   created_at!: Date;
-
-  @OneToMany(() => PassengerCashMoney, (pcm) => pcm.money)
-  cashes!: PassengerCashMoney[];
 }

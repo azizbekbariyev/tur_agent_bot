@@ -1,5 +1,5 @@
-import { Column, Entity, OneToMany, PrimaryGeneratedColumn } from 'typeorm';
-import { PassengerCashMoney } from './passanger_cash_money';
+import { Column, Entity, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
+import { Cash } from './cash';
 
 @Entity('passenger')
 export class Passenger {
@@ -21,6 +21,6 @@ export class Passenger {
   })
   created_at!: Date;
 
-  @OneToMany(() => PassengerCashMoney, (pcm) => pcm.passenger)
-  cashes!: PassengerCashMoney[];
+  @ManyToOne(() => Cash, (cash) => cash.passengers)
+  cash!: Cash;
 }

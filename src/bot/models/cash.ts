@@ -7,8 +7,10 @@ import {
   PrimaryGeneratedColumn,
 } from 'typeorm';
 import { User } from './user';
-import { PassengerCashMoney } from './passanger_cash_money';
-import { CashService } from './cash_service';
+import { Money } from './money';
+import { Passenger } from './passenger';
+import { Service } from './service';
+import { History } from './history';
 
 @Entity()
 export class Cash {
@@ -35,10 +37,16 @@ export class Cash {
   @Column()
   return_date!: string;
 
-  @Column()
+  @Column({
+    type: 'timestamp',
+    default: () => 'CURRENT_TIMESTAMP',
+  })
   created_at!: Date;
 
-  @Column()
+  @Column({
+    type: 'timestamp',
+    default: () => 'CURRENT_TIMESTAMP',
+  })
   updated_at!: Date;
 
   // Kassani izohi
@@ -52,7 +60,6 @@ export class Cash {
       'draft',
       'pending_approval',
       'approved',
-      'due',
       'closed',
       'cancelled',
       'sent_for_rework',
@@ -64,19 +71,37 @@ export class Cash {
   @Column()
   destination!: string;
 
-  @Column()
-  brutto!: number;
+  @Column({
+    type: 'numeric',
+    precision: 15,
+    scale: 2,
+  })
+  brutto!: string;
 
-  @Column()
-  netto!: number;
+  @Column({
+    type: 'numeric',
+    precision: 15,
+    scale: 2,
+  })
+  netto!: string;
 
   @ManyToOne(() => User, (user) => user.cashes)
   @JoinColumn({ name: 'user_id' })
   user!: User;
 
-  @OneToMany(() => PassengerCashMoney, (pcm) => pcm.cash)
-  passengers!: PassengerCashMoney[];
+  @OneToMany(() => Money, (money) => money.cash, {
+    cascade: true,
+  })
+  moneys!: Money[];
 
-  @OneToMany(() => CashService, (cs) => cs.cash)
-  services!: CashService[];
+  @OneToMany(() => Passenger, (passenger) => passenger.cash, {
+    cascade: true,
+  })
+  passengers!: Passenger[];
+
+  @OneToMany(() => Service, (service) => service.cash)
+  services!: Service[];
+
+  @OneToMany(() => History, (history) => history.cash)
+  history!: History[];
 }

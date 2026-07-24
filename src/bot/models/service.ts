@@ -1,5 +1,11 @@
-import { Column, Entity, OneToMany, PrimaryGeneratedColumn } from 'typeorm';
-import { CashService } from './cash_service';
+import {
+  Column,
+  Entity,
+  JoinColumn,
+  ManyToOne,
+  PrimaryGeneratedColumn,
+} from 'typeorm';
+import { Cash } from './cash';
 
 @Entity('service')
 export class Service {
@@ -7,10 +13,17 @@ export class Service {
   id!: number;
 
   @Column()
-  name!: string;
+  company_name!: string;
 
   @Column()
-  amount!: number;
+  name!: string;
+
+  @Column({
+    type: 'numeric',
+    precision: 15,
+    scale: 2,
+  })
+  amount!: string;
 
   @Column()
   code!: string;
@@ -21,6 +34,7 @@ export class Service {
   })
   created_at!: Date;
 
-  @OneToMany(() => CashService, (cashService) => cashService.service)
-  cashes!: CashService[];
+  @ManyToOne(() => Cash, (cash) => cash.services)
+  @JoinColumn({ name: 'cash_id' })
+  cash!: Cash;
 }

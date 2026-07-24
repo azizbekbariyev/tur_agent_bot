@@ -6,8 +6,6 @@ import { Service } from './models/service';
 import { Passenger } from './models/passenger';
 import { Cash } from './models/cash';
 import { User } from './models/user';
-import { CashService } from './models/cash_service';
-import { PassengerCashMoney } from './models/passanger_cash_money';
 import { History } from './models/history';
 import { Notification } from './models/notification';
 import { BotUpdate } from './bot.update';
@@ -21,13 +19,12 @@ import { JwtService } from '@nestjs/jwt';
       Passenger,
       Cash,
       User,
-      CashService,
-      PassengerCashMoney,
       History,
       Notification,
     ]),
   ],
   controllers: [],
   providers: [BotService, BotUpdate, JwtService],
+  exports: [BotService],
 })
 export class BotModule {}

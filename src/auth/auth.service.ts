@@ -34,7 +34,7 @@ export class AuthService {
         lastName: user.last_name,
         telegramId: user.telegram_id,
         username: user.username ? user.username : 'null',
-        role: user.type == 'admin' ? 'ADMIN' : 'EMPLOYEE',
+        role: user.type,
         status: user.status ? 'ACTIVE' : 'INACTIVE',
         createdAt: user.created_at,
         active: user.status,

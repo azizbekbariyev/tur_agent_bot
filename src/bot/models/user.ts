@@ -13,8 +13,10 @@ export class User {
   })
   telegram_id!: number;
 
-  @Column()
-  username!: string;
+  @Column({
+    nullable: true,
+  })
+  username?: string;
 
   @Column({
     nullable: true,
@@ -32,7 +34,7 @@ export class User {
   // admin yoki userligi
   @Column({
     type: 'enum',
-    enum: ['admin', 'employee'],
+    enum: ['ADMIN', 'EMPLOYEE'],
   })
   type!: string;
 
@@ -47,6 +49,12 @@ export class User {
     default: true,
   })
   status!: boolean;
+
+  @Column({
+    type: 'boolean',
+    default: false,
+  })
+  is_deleted!: boolean;
 
   @OneToMany(() => Cash, (cash) => cash.user)
   cashes!: Cash[];

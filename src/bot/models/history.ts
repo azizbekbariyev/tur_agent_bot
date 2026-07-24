@@ -6,6 +6,7 @@ import {
   PrimaryGeneratedColumn,
 } from 'typeorm';
 import { User } from './user';
+import { Cash } from './cash';
 
 @Entity('history')
 export class History {
@@ -30,4 +31,8 @@ export class History {
   @ManyToOne(() => User, (user) => user.history)
   @JoinColumn({ name: 'user_id' })
   user!: User;
+
+  @ManyToOne(() => Cash, (cash) => cash.history, { nullable: true })
+  @JoinColumn({ name: 'cash_id' })
+  cash?: Cash;
 }

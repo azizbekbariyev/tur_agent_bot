@@ -13,17 +13,19 @@ import {
 import { CashService } from './cash.service';
 import { JwtAuthGuard } from 'src/common/guard/jwt-auth.guard';
 import {
-  CashesFilterDto,
   CreateCashDto,
   CreatePaymantDto,
+  CreateUserDto,
   DashboardFilterDto,
+  UpdateCashDto,
+  UpdateCashStatusDto,
   UpdateUserDto,
 } from './dto/cash.dto';
 import { Query } from '@nestjs/common';
 
 @Controller()
 export class CashController {
-  constructor(private readonly cashService: CashService) { }
+  constructor(private readonly cashService: CashService) {}
 
   //-------------------------------Employee-------------------------------//
 
@@ -47,21 +49,26 @@ export class CashController {
   }
 
   @UseGuards(JwtAuthGuard)
-  @Post('create-cash')
+  @Post('cash')
   createCash(@Req() req: Request, @Body() body: CreateCashDto) {
     return this.cashService.createCash(req.user, body);
   }
 
   @UseGuards(JwtAuthGuard)
-  @Get('cash/employee/:id')
-  getCash(@Req() req: Request, @Param('id') id: number) {
+  @Get('cash/:id')
+  async getCash(@Req() req: Request, @Param('id') id: number) {
     return this.cashService.getCash(req.user, id);
   }
 
-  // @Patch('cash/employee/:id')
-  // updateCash(@Req() req: Request, @Param('id') id: number) {
-  //   return this.cashService.updateCash(req.user, id);
-  // }
+  @UseGuards(JwtAuthGuard)
+  @Patch('cash/employee/:id')
+  updateCash(
+    @Req() req: Request,
+    @Param('id') id: number,
+    @Body() body: UpdateCashDto,
+  ) {
+    return this.cashService.updateCash(req.user, id, body);
+  }
 
   @UseGuards(JwtAuthGuard)
   @Post('cash/employee/payment/:id')
@@ -71,11 +78,6 @@ export class CashController {
     @Body() body: CreatePaymantDto,
   ) {
     return this.cashService.createPaymant(req.user, id, body);
-  }
-
-  @Get('services')
-  getServices() {
-    return this.cashService.getServices();
   }
 
   //-----------------------------Admin----------------------------------//
@@ -92,9 +94,43 @@ export class CashController {
     return this.cashService.getUsers(req.user);
   }
 
+  @Delete('user/:id')
+  deleteUser(@Req() req: Request, @Param('id') id: number) {
+    return this.cashService.deleteUser(req.user, id);
+  }
+
+  @Get('user/me')
+  async getMe(@Req() req: Request) {
+    return this.cashService.getMe(req.user);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Get('history')
+  findAll(
+    @Req() req: Request,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+    @Query('userId') userId?: string,
+    @Query('search') search?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    return this.cashService.findAll(
+      {
+        page: page ? Number(page) : 1,
+        limit: limit ? Number(limit) : 20,
+        userId: userId ? Number(userId) : undefined,
+        search,
+        from,
+        to,
+      },
+      req.user,
+    );
+  }
+
   @UseGuards(JwtAuthGuard)
   @Patch('user/:id')
-  updateUser(
+  updateUserAdmin(
     @Req() req: Request,
     @Param('id') id: number,
     @Body() body: UpdateUserDto,
@@ -102,13 +138,19 @@ export class CashController {
     return this.cashService.updateUser(req.user, id, body);
   }
 
-  @Delete('user/:id')
-  deleteUser(@Req() req: Request, @Param('id') id: number) {
-    return this.cashService.deleteUser(req.user, id);
+  @UseGuards(JwtAuthGuard)
+  @Patch('cash/status/:id')
+  updateCashStatus(
+    @Req() req: Request,
+    @Param('id') id: number,
+    @Body() body: UpdateCashStatusDto,
+  ) {
+    return this.cashService.updateCashStatus(req.user, id, body);
   }
 
-  @Get('user/me')
-  getMe(@Req() req: Request) {
-    return this.cashService.getMe(req.user);
+  @UseGuards(JwtAuthGuard)
+  @Post('user')
+  createUser(@Req() req: Request, @Body() body: CreateUserDto) {
+    return this.cashService.createUser(req.user, body);
   }
 }

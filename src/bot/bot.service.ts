@@ -6,14 +6,65 @@ import { Context, Telegraf } from 'telegraf';
 import { User } from './models/user';
 import { Repository } from 'typeorm';
 import { JwtService } from '@nestjs/jwt';
+import { Cash } from './models/cash';
+import { Between } from 'typeorm';
+import { Notification } from './models/notification';
+import ExcelJS from 'exceljs';
+import { InputFile } from 'telegraf/types';
+
+const COMPANY_NAME = 'ООО "KAKOS TOUR 2"';
+
+const RU_MONTHS = [
+  'ЯНВАРЬ',
+  'ФЕВРАЛЬ',
+  'МАРТ',
+  'АПРЕЛЬ',
+  'МАЙ',
+  'ИЮНЬ',
+  'ИЮЛЬ',
+  'АВГУСТ',
+  'СЕНТЯБРЬ',
+  'ОКТЯБРЬ',
+  'НОЯБРЬ',
+  'ДЕКАБРЬ',
+];
+
+const HEADER_FILL: ExcelJS.Fill = {
+  type: 'pattern',
+  pattern: 'solid',
+  fgColor: { argb: 'FFFFFF00' }, // sariq
+};
+
+const THIN_BORDER: Partial<ExcelJS.Borders> = {
+  top: { style: 'thin' },
+  left: { style: 'thin' },
+  bottom: { style: 'thin' },
+  right: { style: 'thin' },
+};
+
+function formatDate(d: string | Date) {
+  const date = new Date(d);
+  const dd = String(date.getDate()).padStart(2, '0');
+  const mm = String(date.getMonth() + 1).padStart(2, '0');
+  const yyyy = date.getFullYear();
+  return `${dd}.${mm}.${yyyy}`;
+}
+
+function formatMoney(n: number) {
+  // 21000000 -> "21,000,000"
+  return Math.round(n).toLocaleString('en-US');
+}
 
 @Injectable()
 export class BotService {
   constructor(
     @InjectBot(BOT_NAME) private readonly bot: Telegraf,
     @InjectRepository(User) private readonly userRepository: Repository<User>,
+    @InjectRepository(Cash) private readonly cashRepository: Repository<Cash>,
+    @InjectRepository(Notification)
+    private readonly notificationRepository: Repository<Notification>,
     private readonly jwtService: JwtService,
-  ) {}
+  ) { }
 
   async start(@Ctx() ctx: Context) {
     const user = await this.userRepository.findOne({
@@ -29,18 +80,17 @@ export class BotService {
       }
       return;
     }
-    console.log(ctx.from);
     const newUser = await this.userRepository.save({
       telegram_id: ctx.from!.id,
       username: ctx.from!.username,
       first_name: ctx.from!.first_name,
       last_name: ctx.from!.last_name,
-      type: 'employee',
+      type: 'EMPLOYEE',
     });
 
     const token = await this.generateToken({
       telegram_id: ctx.from!.id,
-      type: 'employee',
+      type: 'EMPLOYEE',
       id: newUser.id,
     });
     await ctx.reply(`Employee + ${token}`);
@@ -59,5 +109,279 @@ export class BotService {
       },
     );
     return token;
+  }
+
+  async dailyCheck() {
+    const today = new Date().toISOString().slice(0, 10);
+
+    const threeDaysLater = new Date();
+    threeDaysLater.setDate(threeDaysLater.getDate() + 3);
+    const end = threeDaysLater.toISOString().slice(0, 10);
+
+    const cashes = await this.cashRepository.find({
+      where: {
+        departure_date: Between(today, end),
+      },
+      relations: {
+        user: true,
+      },
+    });
+
+    if (cashes.length === 0) return;
+
+    for (const cash of cashes) {
+      const due = Number(cash.brutto) - Number(cash.netto);
+
+      let message = `✈️ <b>Eslatma</b>\n\n`;
+      message += `📅 Parvoz sanasi: <b>${cash.departure_date}</b>\n`;
+      message += `🌍 Yo'nalish: <b>${cash.destination}</b>\n`;
+      message += `💼 Kassa: <b>${cash.cash_number}</b>\n\n`;
+
+      if (due > 0) {
+        message += `💰 Ushbu kassa bo'yicha <b>${due.toFixed(2)} USD</b> qarzdorlik mavjud.\n`;
+        message += `Iltimos, parvozdan oldin to'lovni yakunlang.`;
+      } else {
+        message += `✅ Ushbu kassa bo'yicha qarzdorlik mavjud emas.\n`;
+        message += `Sizning parvozingizga 3 kundan kam vaqt qoldi. Oq yo'l! ✈️`;
+      }
+
+      await this.bot.telegram.sendMessage(cash.user.telegram_id, message, {
+        parse_mode: 'HTML',
+      });
+
+      await this.notificationRepository.save({
+        sms: message,
+        type: 'cash',
+        user: { id: cash.user.id },
+      });
+    }
+  }
+
+  public sendMessage(user_id: number, message: string) {
+    return this.bot.telegram.sendMessage(user_id, message);
+  }
+
+  public async getExcel(ctx: Context) {
+    const user = await this.userRepository.findOne({
+      where: { telegram_id: ctx.from!.id },
+    });
+    if (user?.type !== 'ADMIN') {
+      await ctx.reply('Siz admin emassiz 😂');
+      return;
+    }
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet('Kassalar', {
+      views: [{ state: 'frozen', ySplit: 0 }],
+    });
+
+    const cashes = await this.cashRepository.find({
+      relations: {
+        user: true,
+        passengers: true,
+        services: true,
+        moneys: true,
+      },
+      order: { departure_date: 'ASC' },
+    });
+
+    // Ustun kengliklari (rasmdagi tartib bo'yicha)
+    const COLS = [
+      { key: 'operator', width: 26 },
+      { key: 'no', width: 20 },
+      { key: 'manager', width: 14 },
+      { key: 'direction', width: 30 },
+      { key: 'dates', width: 22 },
+      { key: 'package', width: 14 },
+      { key: 'total', width: 14 },
+      { key: 'payToOperator', width: 36 },
+      { key: 'touristInfo', width: 22 },
+      { key: 'note', width: 14 },
+      { key: 'profit', width: 16 },
+    ];
+    worksheet.columns = COLS.map((c) => ({ key: c.key, width: c.width }));
+
+    // Cashlarni oy bo'yicha guruhlaymiz (departure_date asosida)
+    const groups = new Map<string, Cash[]>();
+    for (const cash of cashes) {
+      const d = new Date(cash.departure_date);
+      const key = `${d.getFullYear()}-${d.getMonth()}`;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key)!.push(cash);
+    }
+
+    let rowIndex = 1;
+    const lastCol = COLS.length; // 11 -> K ustuni
+    // Har bir cash yozuvi endi 2 ta fizik qatorni egallaydi:
+    //   - yuqori qator: "оплата туроператору" ustunida breakdown (har bir
+    //     xizmat narxi alohida qatorda)
+    //   - pastki qator: shu ustunda JAMI summa
+    // Qolgan ustunlar (operator, manager, direction va h.k.) ikkala qatorga
+    // birlashtirilgan (mergeCells) holda, vertikal markazda ko'rsatiladi.
+    const ROWS_PER_CASH = 2;
+
+    // Ustunlar bo'yicha, "оплата туроператору"(8)dan boshqa hammasi
+    // birlashtiriladigan (merge qilinadigan) ustunlar.
+    const MERGED_COLS = [1, 2, 3, 4, 5, 6, 7, 9, 10, 11];
+    const PAY_COL = 8;
+
+    for (const [key, groupCashes] of groups) {
+      const [year, monthIdx] = key.split('-').map(Number);
+
+      // ---- Kompaniya nomi sarlavhasi ----
+      worksheet.mergeCells(rowIndex, 1, rowIndex, lastCol - 1);
+      const companyCell = worksheet.getCell(rowIndex, 1);
+      companyCell.value = COMPANY_NAME;
+      companyCell.font = { bold: true, size: 18 };
+      companyCell.alignment = { horizontal: 'center', vertical: 'middle' };
+      companyCell.fill = HEADER_FILL;
+      worksheet.getRow(rowIndex).height = 35;
+      rowIndex++;
+
+      // ---- Oy nomi sarlavhasi ----
+      worksheet.mergeCells(rowIndex, 1, rowIndex, lastCol - 1);
+      const monthCell = worksheet.getCell(rowIndex, 1);
+      monthCell.value = `${RU_MONTHS[monthIdx]} ${year}`;
+      monthCell.font = { bold: true, size: 20 };
+      monthCell.alignment = { horizontal: 'center', vertical: 'middle' };
+      monthCell.fill = HEADER_FILL;
+      worksheet.getRow(rowIndex).height = 35;
+      rowIndex++;
+
+      // ---- Ustun sarlavhalari ----
+      const headerRow = worksheet.getRow(rowIndex);
+      const headers = [
+        'туроператор',
+        '№',
+        'менеджер',
+        'направление',
+        'дата вылета и прилета',
+        'турпакет',
+        'итого',
+        'оплата туроператору',
+        'инфо туриста',
+        'примечание',
+        '',
+      ];
+      headers.forEach((h, i) => {
+        const cell = headerRow.getCell(i + 1);
+        cell.value = h;
+        cell.font = { bold: true };
+        cell.fill = HEADER_FILL;
+        cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+        cell.border = THIN_BORDER;
+      });
+      headerRow.height = 35;
+      rowIndex++;
+
+      // ---- Ma'lumot qatorlari (har bir cash — 2 ta fizik qator) ----
+      for (const cash of groupCashes) {
+        const services = cash.services ?? [];
+        const mainPassenger = (cash.passengers ?? [])[0];
+
+        const operatorLines = services.map((s) => s.name).join('\n');
+
+        const payLines = services
+          .map((s) => `${s.name}: ${formatMoney(Number(s.amount))}`)
+          .join('\n');
+        const payTotal = services.reduce((acc, s) => acc + Number(s.amount), 0);
+
+        const brutto = Number(cash.brutto);
+        const netto = Number(cash.netto);
+        const profit = brutto - netto;
+
+        const topRowIndex = rowIndex;
+        const bottomRowIndex = rowIndex + 1;
+        const topRow = worksheet.getRow(topRowIndex);
+        const bottomRow = worksheet.getRow(bottomRowIndex);
+
+        // ---- Birlashtiriladigan ustunlar: qiymat yuqori qatorga qo'yiladi,
+        // so'ng ikkala qator bo'ylab merge qilinadi ----
+        topRow.getCell(1).value = operatorLines || '—';
+        topRow.getCell(2).value = cash.cash_number ?? '';
+        topRow.getCell(3).value = cash.user
+          ? `${cash.user.first_name} ${cash.user.last_name ?? ''}`.trim()
+          : '';
+        topRow.getCell(4).value = cash.destination;
+
+        topRow.getCell(4).alignment = {
+          horizontal: 'center',
+          vertical: 'middle',
+        };
+        topRow.getCell(5).value = `${formatDate(cash.departure_date)}\n${formatDate(cash.return_date)}`;
+        topRow.getCell(6).value = formatMoney(brutto);
+        topRow.getCell(7).value = formatMoney(brutto);
+        topRow.getCell(9).value = mainPassenger
+          ? `${mainPassenger.first_name} ${mainPassenger.last_name}\n${mainPassenger.phone_number}`
+          : '—';
+        topRow.getCell(10).value = cash.comment ?? '';
+        topRow.getCell(11).value = formatMoney(profit);
+
+        for (const c of MERGED_COLS) {
+          worksheet.mergeCells(topRowIndex, c, bottomRowIndex, c);
+        }
+
+        // ---- "оплата туроператору": YUQORI qatorda breakdown, PASTKI qatorda JAMI ----
+        topRow.getCell(PAY_COL).value = payLines || '—';
+        topRow.getCell(PAY_COL).font = { underline: true };
+
+        bottomRow.getCell(PAY_COL).value = formatMoney(payTotal);
+        bottomRow.getCell(PAY_COL).font = { bold: true };
+
+        // ---- Formatlash: ikkala qatordagi barcha kataklar ----
+        for (const r of [topRow, bottomRow]) {
+          for (let c = 1; c <= lastCol; c++) {
+            const cell = r.getCell(c);
+            cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+            cell.border = THIN_BORDER;
+          }
+        }
+        topRow.getCell(1).alignment = { horizontal: 'left', vertical: 'middle', wrapText: true };
+        topRow.getCell(4).alignment = { horizontal: 'left', vertical: 'middle', wrapText: true };
+        topRow.getCell(PAY_COL).alignment = { horizontal: 'left', vertical: 'middle', wrapText: true };
+        bottomRow.getCell(PAY_COL).alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+
+        // Profit ustuni rangi: musbat -> yashil, manfiy (qarz) -> qizil
+        for (const r of [topRow, bottomRow]) {
+          const profitCell = r.getCell(11);
+          profitCell.font = { bold: true, color: { argb: profit >= 0 ? 'FF166534' : 'FFB91C1C' } };
+          profitCell.fill = {
+            type: 'pattern',
+            pattern: 'solid',
+            fgColor: { argb: profit >= 0 ? 'FFDCFCE7' : 'FFFEE2E2' },
+          };
+        }
+
+        // Izoh qatorida "qarz" so'zi bo'lsa qizil qilib belgilaymiz
+        if (cash.comment && /qarz|debt/i.test(cash.comment)) {
+          topRow.getCell(10).font = { bold: true, color: { argb: 'FFDC2626' } };
+        }
+
+        // ---- Qator balandliklari ----
+        // Yuqori qator: eng ko'p qatorli mazmunga (operator ro'yxati yoki
+        // to'lov breakdown'i) qarab moslanadi.
+        const topLines = Math.max(
+          operatorLines.split('\n').length,
+          payLines.split('\n').length,
+          2, // dates/touristInfo doim 2 qatorli
+        );
+        topRow.height = Math.max(20, topLines * 14);
+        bottomRow.height = 22; // faqat JAMI summa uchun, doim bir xil
+
+        rowIndex += ROWS_PER_CASH;
+      }
+
+      rowIndex++; // guruhlar orasida bo'sh qator
+    }
+
+    const buffer = await workbook.xlsx.writeBuffer();
+    const document: InputFile = {
+      // Buffer'ni Node Buffer'ga aylantirish shart (ExcelJS.Buffer va
+      // Node Buffer bir xil emas — ba'zi TS versiyalarida to'g'ridan-to'g'ri
+      // mos kelmasligi mumkin).
+      source: Buffer.from(buffer),
+      filename: `cashes-${new Date().toISOString().slice(0, 10)}.xlsx`,
+    };
+
+    await ctx.replyWithDocument(document);
   }
 }
