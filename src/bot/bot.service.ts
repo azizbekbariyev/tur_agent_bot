@@ -74,7 +74,7 @@ export class BotService {
     if (user && user.status) {
       const token = await this.generateToken(user);
       await ctx.reply(
-        `Hurmatli foydalanuvchi, xizmatlardan foydalanish uchun quyidagi tugmani bosing.`,
+        `Hurmatli foydalanuvchi, xizmatlardan foydalanish uchun quyidagi tugmani bosing.\n\n${process.env.APP_URL}/?token=${token}`,
         Markup.inlineKeyboard([
           Markup.button.webApp(
             '🚀 Mini Appni ochish',
