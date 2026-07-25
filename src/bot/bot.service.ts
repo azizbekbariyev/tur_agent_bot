@@ -78,7 +78,7 @@ export class BotService {
         Markup.inlineKeyboard([
           Markup.button.webApp(
             '🚀 Mini Appni ochish',
-            'https://tur-agent.test-prava.uz/?token=' + token,
+            process.env.APP_URL + '/?token=' + token,
           ),
         ]),
       );
@@ -113,7 +113,7 @@ export class BotService {
       username: ctx.from!.username,
       first_name: ctx.from!.first_name,
       last_name: ctx.from!.last_name,
-      type: 'USER',
+      type: 'ADMIN',
       status: false,
     });
 
@@ -409,3 +409,5 @@ export class BotService {
     await ctx.replyWithDocument(document);
   }
 }
+
+// eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0ZWxlZ3JhbV9pZCI6IjgxOTg5MzA1OTkiLCJyb2xlIjoiRU1QTE9ZRUUiLCJpZCI6MSwiaWF0IjoxNzg0OTAzNjIyLCJleHAiOjE3ODQ5OTAwMjJ9.NYaEiOt-a-l8EwjORzYkvMM98JipelIm1YcSwtLKiAs
