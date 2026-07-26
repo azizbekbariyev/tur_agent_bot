@@ -12,8 +12,10 @@ export class Passenger {
   @Column()
   last_name!: string;
 
-  @Column()
-  phone_number!: string;
+  @Column({
+    nullable: true,
+  })
+  phone_number?: string;
 
   @Column({
     type: 'timestamp',

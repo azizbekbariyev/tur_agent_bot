@@ -59,6 +59,9 @@ export class User {
   @OneToMany(() => Cash, (cash) => cash.user)
   cashes!: Cash[];
 
+  @OneToMany(() => Cash, (cash) => cash.additionalUser)
+  additionalCashes!: Cash[];
+
   @OneToMany(() => History, (history) => history.user)
   history!: History[];
 

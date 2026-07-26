@@ -3,9 +3,11 @@ import {
   Entity,
   JoinColumn,
   ManyToOne,
+  OneToMany,
   PrimaryGeneratedColumn,
 } from 'typeorm';
-import { Cash } from './cash';
+import { ServiceType } from './service_type';
+import { CashServices } from './cash_services';
 
 @Entity('service')
 export class Service {
@@ -19,22 +21,15 @@ export class Service {
   name!: string;
 
   @Column({
-    type: 'numeric',
-    precision: 15,
-    scale: 2,
-  })
-  amount!: string;
-
-  @Column()
-  code!: string;
-
-  @Column({
     type: 'timestamp',
     default: () => 'CURRENT_TIMESTAMP',
   })
   created_at!: Date;
 
-  @ManyToOne(() => Cash, (cash) => cash.services)
-  @JoinColumn({ name: 'cash_id' })
-  cash!: Cash;
+  @OneToMany(() => CashServices, (cashServices) => cashServices.service)
+  cashServices!: CashServices[];
+
+  @ManyToOne(() => ServiceType, (serviceType) => serviceType.services)
+  @JoinColumn({ name: 'service_type_id' })
+  serviceType!: ServiceType;
 }

@@ -11,6 +11,9 @@ import { Notification } from 'src/bot/models/notification';
 import { JwtService } from '@nestjs/jwt';
 import { User } from 'src/bot/models/user';
 import { BotModule } from 'src/bot/bot.module';
+import { CashServices } from '../bot/models/cash_services';
+import { ServiceType } from '../bot/models/service_type';
+import { Brutto } from '../bot/models/brutto';
 
 @Module({
   imports: [
@@ -22,6 +25,9 @@ import { BotModule } from 'src/bot/bot.module';
       History,
       Notification,
       User,
+      ServiceType,
+      Brutto,
+      CashServices,
     ]),
     BotModule,
   ],

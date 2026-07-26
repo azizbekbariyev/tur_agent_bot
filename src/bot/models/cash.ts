@@ -4,13 +4,15 @@ import {
   JoinColumn,
   ManyToOne,
   OneToMany,
+  OneToOne,
   PrimaryGeneratedColumn,
 } from 'typeorm';
 import { User } from './user';
 import { Money } from './money';
 import { Passenger } from './passenger';
-import { Service } from './service';
 import { History } from './history';
+import { Brutto } from './brutto';
+import { CashServices } from './cash_services';
 
 @Entity()
 export class Cash {
@@ -20,10 +22,6 @@ export class Cash {
   // Kassani raqami
   @Column()
   cash_number!: string;
-
-  // Qo'shimcha xodim
-  @Column()
-  additional_user!: string;
 
   // Turistlar soni
   @Column()
@@ -71,19 +69,18 @@ export class Cash {
   @Column()
   destination!: string;
 
-  @Column({
-    type: 'numeric',
-    precision: 15,
-    scale: 2,
-  })
-  brutto!: string;
-
+  //Servicelarni hamma puli
   @Column({
     type: 'numeric',
     precision: 15,
     scale: 2,
   })
   netto!: string;
+
+  // Qo'shimcha xodim
+  @ManyToOne(() => User, (user) => user.additionalCashes)
+  @JoinColumn({ name: 'additional_user' })
+  additionalUser!: User;
 
   @ManyToOne(() => User, (user) => user.cashes)
   @JoinColumn({ name: 'user_id' })
@@ -99,9 +96,15 @@ export class Cash {
   })
   passengers!: Passenger[];
 
-  @OneToMany(() => Service, (service) => service.cash)
-  services!: Service[];
+  @OneToMany(() => CashServices, (cashServices) => cashServices.cash)
+  cashServices!: CashServices[];
 
   @OneToMany(() => History, (history) => history.cash)
   history!: History[];
+
+  @OneToOne(() => Brutto, (brutto) => brutto.cash, {
+    cascade: true,
+  })
+  @JoinColumn({ name: 'brutto_id' })
+  brutto!: Brutto;
 }

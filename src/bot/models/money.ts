@@ -30,6 +30,9 @@ export class Money {
   })
   currency!: string;
 
+  @Column()
+  currency_amount!: number;
+
   @ManyToOne(() => Cash, (cash) => cash.moneys)
   @JoinColumn({ name: 'cash_id' })
   cash!: Cash;

@@ -51,8 +51,16 @@ function formatDate(d: string | Date) {
 }
 
 function formatMoney(n: number) {
-  // 21000000 -> "21,000,000"
   return Math.round(n).toLocaleString('en-US');
+}
+
+// XATOLIK TUZATILDI: bu funksiya cash.service.ts'dagi bilan bir xil mantiq -
+// UZS bo'lsa aylantirish shart emas, aks holda (USD/EUR) kursga ko'paytiriladi.
+// Brutto va Netto'ni solishtirish/ayirish uchun IKKALASI HAM bir xil
+// valyutaga (so'mga) keltirilishi shart, aks holda natija ma'nosiz bo'ladi.
+function toUZS(amount: number, currency: string | undefined, rate: number): number {
+  if (currency === 'UZS') return amount;
+  return amount * (rate || 0);
 }
 
 @Injectable()
@@ -75,12 +83,6 @@ export class BotService {
       const token = await this.generateToken(user);
       await ctx.reply(
         `Hurmatli foydalanuvchi, xizmatlardan foydalanish uchun quyidagi tugmani bosing.\n\n${process.env.APP_URL}/?token=${token}`,
-        Markup.inlineKeyboard([
-          Markup.button.webApp(
-            '🚀 Mini Appni ochish',
-            process.env.APP_URL + '/?token=' + token,
-          ),
-        ]),
       );
       return;
     } else if (ctx.from!.id == Number(process.env.ADMIN)) {
@@ -106,6 +108,7 @@ export class BotService {
           ),
         ]),
       );
+      return;
     }
 
     await this.userRepository.save({
@@ -148,21 +151,37 @@ export class BotService {
       },
       relations: {
         user: true,
+        brutto: true,
+        moneys: true, // YANGI: qarzni to'g'ri hisoblash uchun to'lovlar kerak
       },
     });
 
     if (cashes.length === 0) return;
 
     for (const cash of cashes) {
-      const due = Number(cash.brutto) - Number(cash.netto);
+      // XATOLIK TUZATILDI: endi Brutto va to'langan summa IKKALASI HAM
+      // so'mga o'tkazilib solishtiriladi (avval brutto o'z valyutasida,
+      // netto esa so'mda edi - to'g'ridan-to'g'ri ayirish noto'g'ri natija berardi).
+      const bruttoAmount = Number(cash.brutto?.amount ?? 0);
+      const bruttoRate = Number(cash.brutto?.currency_amount ?? 0);
+      const bruttoInUZS = toUZS(bruttoAmount, cash.brutto?.currency, bruttoRate);
+
+      const paidInUZS = (cash.moneys ?? []).reduce((sum, m) => {
+        const amount = Number(m.money_received ?? 0);
+        const rate = Number(m.currency_amount ?? 0);
+        return sum + toUZS(amount, m.currency, rate);
+      }, 0);
+
+      const due = bruttoInUZS - paidInUZS;
 
       let message = `✈️ <b>Eslatma</b>\n\n`;
       message += `📅 Parvoz sanasi: <b>${cash.departure_date}</b>\n`;
       message += `🌍 Yo'nalish: <b>${cash.destination}</b>\n`;
       message += `💼 Kassa: <b>${cash.cash_number}</b>\n\n`;
 
-      if (due > 0) {
-        message += `💰 Ushbu kassa bo'yicha <b>${due.toFixed(2)} USD</b> qarzdorlik mavjud.\n`;
+      if (due > 0.01) {
+        // XATOLIK TUZATILDI: "USD" deb yozilgan edi, endi qiymat so'mda
+        message += `💰 Ushbu kassa bo'yicha <b>${formatMoney(due)} so'm</b> qarzdorlik mavjud.\n`;
         message += `Iltimos, parvozdan oldin to'lovni yakunlang.`;
       } else {
         message += `✅ Ushbu kassa bo'yicha qarzdorlik mavjud emas.\n`;
@@ -202,13 +221,16 @@ export class BotService {
       relations: {
         user: true,
         passengers: true,
-        services: true,
+        cashServices: {
+          service: true, // XATOLIK TUZATILDI: service (katalog) ham yuklanadi -
+                          // s.service.name / s.service.company_name uchun kerak
+        },
         moneys: true,
+        brutto: true,
       },
       order: { departure_date: 'ASC' },
     });
 
-    // Ustun kengliklari (rasmdagi tartib bo'yicha)
     const COLS = [
       { key: 'operator', width: 26 },
       { key: 'no', width: 20 },
@@ -224,7 +246,6 @@ export class BotService {
     ];
     worksheet.columns = COLS.map((c) => ({ key: c.key, width: c.width }));
 
-    // Cashlarni oy bo'yicha guruhlaymiz (departure_date asosida)
     const groups = new Map<string, Cash[]>();
     for (const cash of cashes) {
       const d = new Date(cash.departure_date);
@@ -234,24 +255,15 @@ export class BotService {
     }
 
     let rowIndex = 1;
-    const lastCol = COLS.length; // 11 -> K ustuni
-    // Har bir cash yozuvi endi 2 ta fizik qatorni egallaydi:
-    //   - yuqori qator: "оплата туроператору" ustunida breakdown (har bir
-    //     xizmat narxi alohida qatorda)
-    //   - pastki qator: shu ustunda JAMI summa
-    // Qolgan ustunlar (operator, manager, direction va h.k.) ikkala qatorga
-    // birlashtirilgan (mergeCells) holda, vertikal markazda ko'rsatiladi.
+    const lastCol = COLS.length;
     const ROWS_PER_CASH = 2;
 
-    // Ustunlar bo'yicha, "оплата туроператору"(8)dan boshqa hammasi
-    // birlashtiriladigan (merge qilinadigan) ustunlar.
     const MERGED_COLS = [1, 2, 3, 4, 5, 6, 7, 9, 10, 11];
     const PAY_COL = 8;
 
     for (const [key, groupCashes] of groups) {
       const [year, monthIdx] = key.split('-').map(Number);
 
-      // ---- Kompaniya nomi sarlavhasi ----
       worksheet.mergeCells(rowIndex, 1, rowIndex, lastCol - 1);
       const companyCell = worksheet.getCell(rowIndex, 1);
       companyCell.value = COMPANY_NAME;
@@ -261,7 +273,6 @@ export class BotService {
       worksheet.getRow(rowIndex).height = 35;
       rowIndex++;
 
-      // ---- Oy nomi sarlavhasi ----
       worksheet.mergeCells(rowIndex, 1, rowIndex, lastCol - 1);
       const monthCell = worksheet.getCell(rowIndex, 1);
       monthCell.value = `${RU_MONTHS[monthIdx]} ${year}`;
@@ -271,7 +282,6 @@ export class BotService {
       worksheet.getRow(rowIndex).height = 35;
       rowIndex++;
 
-      // ---- Ustun sarlavhalari ----
       const headerRow = worksheet.getRow(rowIndex);
       const headers = [
         'туроператор',
@@ -284,7 +294,7 @@ export class BotService {
         'оплата туроператору',
         'инфо туриста',
         'примечание',
-        '',
+        'прибыль',
       ];
       headers.forEach((h, i) => {
         const cell = headerRow.getCell(i + 1);
@@ -297,19 +307,38 @@ export class BotService {
       headerRow.height = 35;
       rowIndex++;
 
-      // ---- Ma'lumot qatorlari (har bir cash — 2 ta fizik qator) ----
       for (const cash of groupCashes) {
-        const services = cash.services ?? [];
+        const cashServices = cash.cashServices ?? [];
         const mainPassenger = (cash.passengers ?? [])[0];
 
-        const operatorLines = services.map((s) => s.name).join('\n');
-
-        const payLines = services
-          .map((s) => `${s.name}: ${formatMoney(Number(s.amount))}`)
+        // XATOLIK TUZATILDI: `s.name` -> `s.service.name` (nom katalogdagi
+        // Service'da, CashServices'da emas).
+        const operatorLines = cashServices
+          .map((cs) => cs.service?.name ?? cs.service?.company_name ?? '—')
           .join('\n');
-        const payTotal = services.reduce((acc, s) => acc + Number(s.amount), 0);
 
-        const brutto = Number(cash.brutto);
+        // XATOLIK TUZATILDI: `s.currency_amount` (bu kurs, masalan 12800)
+        // o'rniga `s.service_amount` (haqiqiy to'lov summasi) ishlatiladi.
+        // Xizmatlar har doim USD deb hisoblanadi -> so'mga o'tkazish uchun
+        // service_amount * currency_amount(kurs).
+        const payLines = cashServices
+          .map((cs) => {
+            const name = cs.service?.name ?? cs.service?.company_name ?? '—';
+            const amountUZS = Number(cs.service_amount) * Number(cs.currency_amount);
+            return `${name}: ${formatMoney(amountUZS)}`;
+          })
+          .join('\n');
+        const payTotal = cashServices.reduce(
+          (acc, cs) => acc + Number(cs.service_amount) * Number(cs.currency_amount),
+          0,
+        );
+
+        // XATOLIK TUZATILDI: Brutto endi so'mga o'tkazilgan holda ishlatiladi
+        // (avval o'z valyutasida edi, Netto (so'm) bilan solishtirilganda
+        // noto'g'ri "foyda" chiqarardi).
+        const bruttoAmount = Number(cash.brutto?.amount ?? 0);
+        const bruttoRate = Number(cash.brutto?.currency_amount ?? 0);
+        const brutto = toUZS(bruttoAmount, cash.brutto?.currency, bruttoRate);
         const netto = Number(cash.netto);
         const profit = brutto - netto;
 
@@ -318,8 +347,6 @@ export class BotService {
         const topRow = worksheet.getRow(topRowIndex);
         const bottomRow = worksheet.getRow(bottomRowIndex);
 
-        // ---- Birlashtiriladigan ustunlar: qiymat yuqori qatorga qo'yiladi,
-        // so'ng ikkala qator bo'ylab merge qilinadi ----
         topRow.getCell(1).value = operatorLines || '—';
         topRow.getCell(2).value = cash.cash_number ?? '';
         topRow.getCell(3).value = cash.user
@@ -344,18 +371,20 @@ export class BotService {
           worksheet.mergeCells(topRowIndex, c, bottomRowIndex, c);
         }
 
-        // ---- "оплата туроператору": YUQORI qatorda breakdown, PASTKI qatorda JAMI ----
         topRow.getCell(PAY_COL).value = payLines || '—';
         topRow.getCell(PAY_COL).font = { underline: true };
 
         bottomRow.getCell(PAY_COL).value = formatMoney(payTotal);
         bottomRow.getCell(PAY_COL).font = { bold: true };
 
-        // ---- Formatlash: ikkala qatordagi barcha kataklar ----
         for (const r of [topRow, bottomRow]) {
           for (let c = 1; c <= lastCol; c++) {
             const cell = r.getCell(c);
-            cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+            cell.alignment = {
+              horizontal: 'center',
+              vertical: 'middle',
+              wrapText: true,
+            };
             cell.border = THIN_BORDER;
           }
         }
@@ -364,7 +393,6 @@ export class BotService {
         topRow.getCell(PAY_COL).alignment = { horizontal: 'left', vertical: 'middle', wrapText: true };
         bottomRow.getCell(PAY_COL).alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
 
-        // Profit ustuni rangi: musbat -> yashil, manfiy (qarz) -> qizil
         for (const r of [topRow, bottomRow]) {
           const profitCell = r.getCell(11);
           profitCell.font = { bold: true, color: { argb: profit >= 0 ? 'FF166534' : 'FFB91C1C' } };
@@ -375,33 +403,26 @@ export class BotService {
           };
         }
 
-        // Izoh qatorida "qarz" so'zi bo'lsa qizil qilib belgilaymiz
         if (cash.comment && /qarz|debt/i.test(cash.comment)) {
           topRow.getCell(10).font = { bold: true, color: { argb: 'FFDC2626' } };
         }
 
-        // ---- Qator balandliklari ----
-        // Yuqori qator: eng ko'p qatorli mazmunga (operator ro'yxati yoki
-        // to'lov breakdown'i) qarab moslanadi.
         const topLines = Math.max(
           operatorLines.split('\n').length,
           payLines.split('\n').length,
-          2, // dates/touristInfo doim 2 qatorli
+          2,
         );
         topRow.height = Math.max(20, topLines * 14);
-        bottomRow.height = 22; // faqat JAMI summa uchun, doim bir xil
+        bottomRow.height = 22;
 
         rowIndex += ROWS_PER_CASH;
       }
 
-      rowIndex++; // guruhlar orasida bo'sh qator
+      rowIndex++;
     }
 
     const buffer = await workbook.xlsx.writeBuffer();
     const document: InputFile = {
-      // Buffer'ni Node Buffer'ga aylantirish shart (ExcelJS.Buffer va
-      // Node Buffer bir xil emas — ba'zi TS versiyalarida to'g'ridan-to'g'ri
-      // mos kelmasligi mumkin).
       source: Buffer.from(buffer),
       filename: `cashes-${new Date().toISOString().slice(0, 10)}.xlsx`,
     };
@@ -409,5 +430,3 @@ export class BotService {
     await ctx.replyWithDocument(document);
   }
 }
-
-// eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0ZWxlZ3JhbV9pZCI6IjgxOTg5MzA1OTkiLCJyb2xlIjoiRU1QTE9ZRUUiLCJpZCI6MSwiaWF0IjoxNzg0OTAzNjIyLCJleHAiOjE3ODQ5OTAwMjJ9.NYaEiOt-a-l8EwjORzYkvMM98JipelIm1YcSwtLKiAs

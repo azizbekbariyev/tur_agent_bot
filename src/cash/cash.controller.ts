@@ -9,33 +9,41 @@ import {
   Param,
   Patch,
   Delete,
+  Query,
 } from '@nestjs/common';
 import { CashService } from './cash.service';
 import { JwtAuthGuard } from 'src/common/guard/jwt-auth.guard';
 import {
   CreateCashDto,
   CreatePaymantDto,
+  CreateServiceCompanyDto,
+  CreateServiceTypeDto,
   CreateUserDto,
   DashboardFilterDto,
   UpdateCashDto,
   UpdateCashStatusDto,
   UpdateUserDto,
 } from './dto/cash.dto';
-import { Query } from '@nestjs/common';
 
+// XATOLIK TUZATILDI: @UseGuards(JwtAuthGuard) endi controller darajasida -
+// avval har bir method'ga alohida yozilardi va ikkitasida (`deleteUser`,
+// `getMe`) unutilib qolgan edi (guardsiz, ya'ni himoyasiz endpoint).
 @Controller()
+@UseGuards(JwtAuthGuard)
 export class CashController {
   constructor(private readonly cashService: CashService) {}
 
   //-------------------------------Employee-------------------------------//
 
-  @UseGuards(JwtAuthGuard)
-  @Get('/dashboard')
+  // XATOLIK TUZATILDI: pastda Admin bo'limida xuddi shunday
+  // @Get('dashboard') bor edi ('/dashboard' va 'dashboard' Nest/Express
+  // uchun bir xil route hisoblanadi) - duplicate route runtime xatoga
+  // yoki noaniq routing'ga olib kelardi. Faqat shu bitta qoldirildi.
+  @Get('dashboard')
   getDashboard(@Req() req: Request, @Query() query: DashboardFilterDto) {
     return this.cashService.getDashboard(req.user, query);
   }
 
-  @UseGuards(JwtAuthGuard)
   @Get('/cashes')
   getCashes(
     @Req() req: Request,
@@ -48,19 +56,11 @@ export class CashController {
     });
   }
 
-  @UseGuards(JwtAuthGuard)
   @Post('cash')
   createCash(@Req() req: Request, @Body() body: CreateCashDto) {
     return this.cashService.createCash(req.user, body);
   }
 
-  @UseGuards(JwtAuthGuard)
-  @Get('cash/:id')
-  async getCash(@Req() req: Request, @Param('id') id: number) {
-    return this.cashService.getCash(req.user, id);
-  }
-
-  @UseGuards(JwtAuthGuard)
   @Patch('cash/employee/:id')
   updateCash(
     @Req() req: Request,
@@ -70,7 +70,6 @@ export class CashController {
     return this.cashService.updateCash(req.user, id, body);
   }
 
-  @UseGuards(JwtAuthGuard)
   @Post('cash/employee/payment/:id')
   createPaymant(
     @Req() req: Request,
@@ -80,15 +79,17 @@ export class CashController {
     return this.cashService.createPaymant(req.user, id, body);
   }
 
-  //-----------------------------Admin----------------------------------//
-
-  @UseGuards(JwtAuthGuard)
-  @Get('dashboard')
-  getDashboardAdmin(@Req() req: Request, @Query() query: DashboardFilterDto) {
-    return this.cashService.getDashboard(req.user, query);
+  @Patch('cash/select-service')
+  selectService(@Req() req: Request) {
+    return this.cashService.selectService(req.user);
   }
 
-  @UseGuards(JwtAuthGuard)
+  //-----------------------------Admin----------------------------------//
+  // XATOLIK TUZATILDI: bu yerda avval TAKRORLANGAN @Get('dashboard') bor
+  // edi - butunlay OLIB TASHLANDI. Yuqoridagi getDashboard() ADMIN va
+  // EMPLOYEE ikkalasi uchun ham ishlaydi (kerak bo'lsa farqni
+  // cashService.getDashboard() ichida req.user.role orqali ажratish mumkin).
+
   @Get('users')
   getUsers(@Req() req: Request) {
     return this.cashService.getUsers(req.user);
@@ -104,7 +105,6 @@ export class CashController {
     return this.cashService.getMe(req.user);
   }
 
-  @UseGuards(JwtAuthGuard)
   @Get('history')
   findAll(
     @Req() req: Request,
@@ -128,7 +128,6 @@ export class CashController {
     );
   }
 
-  @UseGuards(JwtAuthGuard)
   @Patch('user/:id')
   updateUserAdmin(
     @Req() req: Request,
@@ -138,7 +137,6 @@ export class CashController {
     return this.cashService.updateUser(req.user, id, body);
   }
 
-  @UseGuards(JwtAuthGuard)
   @Patch('cash/status/:id')
   updateCashStatus(
     @Req() req: Request,
@@ -148,9 +146,48 @@ export class CashController {
     return this.cashService.updateCashStatus(req.user, id, body);
   }
 
-  @UseGuards(JwtAuthGuard)
   @Post('user')
   createUser(@Req() req: Request, @Body() body: CreateUserDto) {
     return this.cashService.createUser(req.user, body);
+  }
+
+  @Get('company/type/:id')
+  getCompanyTypeById(@Req() req: Request, @Param('id') id: number) {
+    return this.cashService.getCompanyTypeById(req.user, id);
+  }
+
+  @Get('company/type')
+  getCompanyType(@Req() req: Request) {
+    return this.cashService.getCompanyType(req.user);
+  }
+
+  @Get('cash/:id')
+  async getCash(@Req() req: Request, @Param('id') id: number) {
+    return this.cashService.getCash(req.user, id);
+  }
+
+  @Post('service-type')
+  createServiceType(@Req() req: Request, @Body() body: CreateServiceTypeDto) {
+    return this.cashService.createServiceType(req.user, body);
+  }
+
+  @Post('company')
+  createCompany(@Req() req: Request, @Body() body: CreateServiceCompanyDto) {
+    return this.cashService.createServiceCompany(req.user, body);
+  }
+
+  @Get('dashboard/chart')
+  getDashboardChart(@Req() req: Request, @Query() query: DashboardFilterDto) {
+    return this.cashService.getChartData(req.user, query);
+  }
+
+  @Get('users/:id/cashes')
+  getUserCashes(
+    @Req() req: Request,
+    @Param('id') id: number,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    return this.cashService.getUserCashes(req.user, id, from, to);
   }
 }
