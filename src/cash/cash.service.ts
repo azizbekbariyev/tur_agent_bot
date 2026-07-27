@@ -971,13 +971,15 @@ export class CashService {
 
   getCompanyTypeById(user: UserReq, id: number) {
     return this.serviceTypeRepository.findOne({
-      where: { id },
+      where: { id, services: { is_active: true } },
       relations: { services: true },
     });
   }
 
   getCompanyType() {
-    return this.serviceTypeRepository.find();
+    return this.serviceTypeRepository.find({
+      where: { is_active: true },
+    });
   }
 
   selectService(user: UserReq) {
@@ -1171,5 +1173,19 @@ export class CashService {
       totalProfit,
       bonus,
     };
+  }
+
+  deleteService(actor: UserReq, id: number) {
+    if (actor.role !== 'ADMIN') {
+      throw new ForbiddenException();
+    }
+    return this.serviceRepository.update({ id }, { is_active: false });
+  }
+
+  deleteServiceType(actor: UserReq, id: number) {
+    if (actor.role !== 'ADMIN') {
+      throw new ForbiddenException();
+    }
+    return this.serviceTypeRepository.update({ id }, { is_active: false });
   }
 }

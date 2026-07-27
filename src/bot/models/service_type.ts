@@ -9,6 +9,12 @@ export class ServiceType {
   @Column()
   name!: string;
 
-  @OneToMany(() => Service, (service) => service.serviceType)
+  @Column({ default: true })
+  is_active!: boolean;
+
+  @OneToMany(() => Service, (service) => service.serviceType, {
+    nullable: true,
+    onDelete: 'SET NULL',
+  })
   services!: Service[];
 }

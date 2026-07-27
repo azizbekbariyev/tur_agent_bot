@@ -26,6 +26,9 @@ export class Service {
   })
   created_at!: Date;
 
+  @Column({ default: true })
+  is_active!: boolean;
+
   @OneToMany(() => CashServices, (cashServices) => cashServices.service)
   cashServices!: CashServices[];
 

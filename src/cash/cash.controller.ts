@@ -190,4 +190,14 @@ export class CashController {
   ) {
     return this.cashService.getUserCashes(req.user, id, startDate, endDate);
   }
+
+  @Delete('service/:id')
+  deleteService(@Req() req: Request, @Param('id') id: number) {
+    return this.cashService.deleteService(req.user, id);
+  }
+
+  @Delete('service-type/:id')
+  deleteServiceType(@Req() req: Request, @Param('id') id: number) {
+    return this.cashService.deleteServiceType(req.user, id);
+  }
 }
