@@ -194,8 +194,12 @@ export class CashService {
     );
 
     return {
-      openedCashes: cashes.length,
-      soldTours: cashes.filter((cash) => cash.status === 'closed').length,
+      openedCashes: cashes.filter(
+        (cash) => cash.status === 'draft' || cash.status === 'pending_approval',
+      ).length,
+      soldTours: cashes.filter(
+        (cash) => cash.status === 'approved' || cash.status === 'closed',
+      ).length,
       totalBrutto,
       totalNetto,
       totalProfit: totalBrutto - totalNetto,
@@ -203,7 +207,7 @@ export class CashService {
       debtorSum: cashes.reduce((sum, cash) => sum + this.getDebt(cash), 0),
       cancelledCashes: cashes.filter((cash) => cash.status === 'cancelled')
         .length,
-      employeeBonus: 0,
+      closedCashes: cashes.filter((cash) => cash.status === 'closed').length,
     };
   }
 

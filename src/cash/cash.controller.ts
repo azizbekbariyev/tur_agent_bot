@@ -162,7 +162,7 @@ export class CashController {
   }
 
   @Get('cash/:id')
-  async getCash(@Req() req: Request, @Param('id') id: number) {
+  getCash(@Req() req: Request, @Param('id') id: number) {
     return this.cashService.getCash(req.user, id);
   }
 
