@@ -195,7 +195,10 @@ export class CashService {
 
     return {
       openedCashes: cashes.filter(
-        (cash) => cash.status === 'draft' || cash.status === 'pending_approval',
+        (cash) =>
+          cash.status === 'draft' ||
+          cash.status === 'pending_approval' ||
+          cash.status === 'sent_for_rework',
       ).length,
       soldTours: cashes.filter(
         (cash) => cash.status === 'approved' || cash.status === 'closed',
