@@ -200,6 +200,7 @@ export class CashService {
       totalNetto,
       totalProfit: totalBrutto - totalNetto,
       debtorCashes: cashes.filter((cash) => this.getDebt(cash) > 0.01).length,
+      debtorSum: cashes.reduce((sum, cash) => sum + this.getDebt(cash), 0),
       cancelledCashes: cashes.filter((cash) => cash.status === 'cancelled')
         .length,
       employeeBonus: 0,
@@ -256,6 +257,7 @@ export class CashService {
         passengerCount: cash.turist_count,
         totalAmount: cash.netto,
         totalAmountCurrency: 'UZS',
+        brutto: cash.brutto,
         debt: this.getDebt(cash).toFixed(2),
         firstName: cash.user.first_name,
         lastName: cash.user.last_name,
@@ -266,7 +268,7 @@ export class CashService {
   async createCash(user: UserReq, body: CreateCashDto) {
     if (!body.brutto) {
       throw new BadRequestException(
-        "Kelishilgan narx (brutto) kiritilishi shart",
+        'Kelishilgan narx (brutto) kiritilishi shart',
       );
     }
     if (!body.services?.length) {
