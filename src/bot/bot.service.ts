@@ -58,7 +58,11 @@ function formatMoney(n: number) {
 // UZS bo'lsa aylantirish shart emas, aks holda (USD/EUR) kursga ko'paytiriladi.
 // Brutto va Netto'ni solishtirish/ayirish uchun IKKALASI HAM bir xil
 // valyutaga (so'mga) keltirilishi shart, aks holda natija ma'nosiz bo'ladi.
-function toUZS(amount: number, currency: string | undefined, rate: number): number {
+function toUZS(
+  amount: number,
+  currency: string | undefined,
+  rate: number,
+): number {
   if (currency === 'UZS') return amount;
   return amount * (rate || 0);
 }
@@ -164,7 +168,11 @@ export class BotService {
       // netto esa so'mda edi - to'g'ridan-to'g'ri ayirish noto'g'ri natija berardi).
       const bruttoAmount = Number(cash.brutto?.amount ?? 0);
       const bruttoRate = Number(cash.brutto?.currency_amount ?? 0);
-      const bruttoInUZS = toUZS(bruttoAmount, cash.brutto?.currency, bruttoRate);
+      const bruttoInUZS = toUZS(
+        bruttoAmount,
+        cash.brutto?.currency,
+        bruttoRate,
+      );
 
       const paidInUZS = (cash.moneys ?? []).reduce((sum, m) => {
         const amount = Number(m.money_received ?? 0);
@@ -222,8 +230,7 @@ export class BotService {
         user: true,
         passengers: true,
         cashServices: {
-          service: true, // XATOLIK TUZATILDI: service (katalog) ham yuklanadi -
-                          // s.service.name / s.service.company_name uchun kerak
+          service: true,
         },
         moneys: true,
         brutto: true,
@@ -301,7 +308,11 @@ export class BotService {
         cell.value = h;
         cell.font = { bold: true };
         cell.fill = HEADER_FILL;
-        cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+        cell.alignment = {
+          horizontal: 'center',
+          vertical: 'middle',
+          wrapText: true,
+        };
         cell.border = THIN_BORDER;
       });
       headerRow.height = 35;
@@ -324,12 +335,14 @@ export class BotService {
         const payLines = cashServices
           .map((cs) => {
             const name = cs.service?.name ?? cs.service?.company_name ?? '—';
-            const amountUZS = Number(cs.service_amount) * Number(cs.currency_amount);
+            const amountUZS =
+              Number(cs.service_amount) * Number(cs.currency_amount);
             return `${name}: ${formatMoney(amountUZS)}`;
           })
           .join('\n');
         const payTotal = cashServices.reduce(
-          (acc, cs) => acc + Number(cs.service_amount) * Number(cs.currency_amount),
+          (acc, cs) =>
+            acc + Number(cs.service_amount) * Number(cs.currency_amount),
           0,
         );
 
@@ -358,7 +371,8 @@ export class BotService {
           horizontal: 'center',
           vertical: 'middle',
         };
-        topRow.getCell(5).value = `${formatDate(cash.departure_date)}\n${formatDate(cash.return_date)}`;
+        topRow.getCell(5).value =
+          `${formatDate(cash.departure_date)}\n${formatDate(cash.return_date)}`;
         topRow.getCell(6).value = formatMoney(brutto);
         topRow.getCell(7).value = formatMoney(brutto);
         topRow.getCell(9).value = mainPassenger
@@ -388,14 +402,33 @@ export class BotService {
             cell.border = THIN_BORDER;
           }
         }
-        topRow.getCell(1).alignment = { horizontal: 'left', vertical: 'middle', wrapText: true };
-        topRow.getCell(4).alignment = { horizontal: 'left', vertical: 'middle', wrapText: true };
-        topRow.getCell(PAY_COL).alignment = { horizontal: 'left', vertical: 'middle', wrapText: true };
-        bottomRow.getCell(PAY_COL).alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+        topRow.getCell(1).alignment = {
+          horizontal: 'left',
+          vertical: 'middle',
+          wrapText: true,
+        };
+        topRow.getCell(4).alignment = {
+          horizontal: 'left',
+          vertical: 'middle',
+          wrapText: true,
+        };
+        topRow.getCell(PAY_COL).alignment = {
+          horizontal: 'left',
+          vertical: 'middle',
+          wrapText: true,
+        };
+        bottomRow.getCell(PAY_COL).alignment = {
+          horizontal: 'center',
+          vertical: 'middle',
+          wrapText: true,
+        };
 
         for (const r of [topRow, bottomRow]) {
           const profitCell = r.getCell(11);
-          profitCell.font = { bold: true, color: { argb: profit >= 0 ? 'FF166534' : 'FFB91C1C' } };
+          profitCell.font = {
+            bold: true,
+            color: { argb: profit >= 0 ? 'FF166534' : 'FFB91C1C' },
+          };
           profitCell.fill = {
             type: 'pattern',
             pattern: 'solid',

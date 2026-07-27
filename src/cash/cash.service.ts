@@ -8,7 +8,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Cash } from 'src/bot/models/cash';
 import { Service } from 'src/bot/models/service';
 import { CashServices } from 'src/bot/models/cash_services';
-import { DataSource, In, LessThanOrEqual, MoreThanOrEqual, Repository } from 'typeorm';
+import { DataSource, In, Repository } from 'typeorm';
 import { Passenger } from 'src/bot/models/passenger';
 import { Money } from 'src/bot/models/money';
 import { History } from 'src/bot/models/history';
@@ -59,7 +59,7 @@ const TRANSITIONS: Record<CashStatus, Partial<Record<CashStatus, Role[]>>> = {
     cancelled: ['EMPLOYEE'],
   },
   sent_for_rework: {
-    pending_approval: ['EMPLOYEE'],
+    pending_approval: ['EMPLOYEE', 'ADMIN'],
     cancelled: ['EMPLOYEE'],
   },
   closed: {
@@ -115,12 +115,16 @@ export class CashService {
     private readonly serviceTypeRepository: Repository<ServiceType>,
     @InjectRepository(Brutto)
     private readonly bruttoRepository: Repository<Brutto>,
-  ) {}
+  ) { }
 
   // ---- Moliyaviy hisob-kitob yordamchi funksiyalari ----
 
   /** UZS bo'lmasa (USD/EUR) kursga ko'paytiradi, UZS bo'lsa o'zgarishsiz qaytaradi */
-  private toUZS(amount: number, currency: string | undefined, rate: number): number {
+  private toUZS(
+    amount: number,
+    currency: string | undefined,
+    rate: number,
+  ): number {
     if (currency === 'UZS') return amount;
     return amount * (rate || 0);
   }
@@ -180,8 +184,14 @@ export class CashService {
       relations: CASH_RELATIONS,
     });
 
-    const totalBrutto = cashes.reduce((sum, cash) => sum + this.getBrutto(cash), 0);
-    const totalNetto = cashes.reduce((sum, cash) => sum + this.getNetto(cash), 0);
+    const totalBrutto = cashes.reduce(
+      (sum, cash) => sum + this.getBrutto(cash),
+      0,
+    );
+    const totalNetto = cashes.reduce(
+      (sum, cash) => sum + this.getNetto(cash),
+      0,
+    );
 
     return {
       openedCashes: cashes.length,
@@ -190,7 +200,8 @@ export class CashService {
       totalNetto,
       totalProfit: totalBrutto - totalNetto,
       debtorCashes: cashes.filter((cash) => this.getDebt(cash) > 0.01).length,
-      cancelledCashes: cashes.filter((cash) => cash.status === 'cancelled').length,
+      cancelledCashes: cashes.filter((cash) => cash.status === 'cancelled')
+        .length,
       employeeBonus: 0,
     };
   }
@@ -276,9 +287,7 @@ export class CashService {
         where: { id: In(serviceIds) },
       });
       if (foundServices.length !== new Set(serviceIds).size) {
-        throw new BadRequestException(
-          "Tanlangan xizmatlardan biri topilmadi",
-        );
+        throw new BadRequestException('Tanlangan xizmatlardan biri topilmadi');
       }
 
       // Netto - xizmatlar har doim USD deb hisoblanadi: service_amount * currency_amount(kurs)
@@ -442,8 +451,12 @@ export class CashService {
       }> = [];
 
       const pushHistory = (name: string, oldVal: unknown, newVal: unknown) => {
-        const oldStr = oldVal === undefined || oldVal === null ? '' : String(oldVal);
-        const newStr = newVal === undefined || newVal === null ? '' : String(newVal);
+        const oldStr =
+          // eslint-disable-next-line @typescript-eslint/no-base-to-string
+          oldVal === undefined || oldVal === null ? '' : String(oldVal);
+        const newStr =
+          // eslint-disable-next-line @typescript-eslint/no-base-to-string
+          newVal === undefined || newVal === null ? '' : String(newVal);
         if (oldStr === newStr) return;
         historyEntries.push({ name, old_column: oldStr, new_column: newStr });
       };
@@ -474,9 +487,21 @@ export class CashService {
               where: { id: p.id, cash: { id } },
             });
             if (before) {
-              pushHistory(`passenger #${p.id} first_name`, before.first_name, p.first_name);
-              pushHistory(`passenger #${p.id} last_name`, before.last_name, p.last_name);
-              pushHistory(`passenger #${p.id} phone_number`, before.phone_number, p.phone_number);
+              pushHistory(
+                `passenger #${p.id} first_name`,
+                before.first_name,
+                p.first_name,
+              );
+              pushHistory(
+                `passenger #${p.id} last_name`,
+                before.last_name,
+                p.last_name,
+              );
+              pushHistory(
+                `passenger #${p.id} phone_number`,
+                before.phone_number,
+                p.phone_number,
+              );
             }
             await passengerRepo.update(
               { id: p.id, cash: { id } },
@@ -563,7 +588,11 @@ export class CashService {
               service: { id: s.service_id } as Service,
             });
             const saved = await cashServicesRepo.save(created);
-            pushHistory(`xizmat #${saved.id} qo'shildi`, '—', `service_id=${s.service_id}`);
+            pushHistory(
+              `xizmat #${saved.id} qo'shildi`,
+              '—',
+              `service_id=${s.service_id}`,
+            );
           }
         }
       }
@@ -594,9 +623,21 @@ export class CashService {
               where: { id: m.id, cash: { id } },
             });
             if (before) {
-              pushHistory(`to'lov #${m.id} summa`, before.money_received, m.money_received);
-              pushHistory(`to'lov #${m.id} valyuta`, before.currency, m.currency);
-              pushHistory(`to'lov #${m.id} kurs`, before.currency_amount, m.currency_amount);
+              pushHistory(
+                `to'lov #${m.id} summa`,
+                before.money_received,
+                m.money_received,
+              );
+              pushHistory(
+                `to'lov #${m.id} valyuta`,
+                before.currency,
+                m.currency,
+              );
+              pushHistory(
+                `to'lov #${m.id} kurs`,
+                before.currency_amount,
+                m.currency_amount,
+              );
               pushHistory(`to'lov #${m.id} turi`, before.type, m.type);
             }
             await moneyRepo.update(
@@ -668,7 +709,8 @@ export class CashService {
       // Netto - xizmatlar har doim USD deb hisoblanadi
       const newNetto = finalCashServices
         .reduce(
-          (sum, cs) => sum + Number(cs.service_amount) * Number(cs.currency_amount),
+          (sum, cs) =>
+            sum + Number(cs.service_amount) * Number(cs.currency_amount),
           0,
         )
         .toFixed(2);
@@ -685,7 +727,11 @@ export class CashService {
       // ---- Brutto — faqat explicit ravishda kelsa o'zgaradi ----
       if (body.brutto) {
         const newBruttoAmount = body.brutto.amount.toFixed(2);
-        pushHistory('brutto (kelishilgan narx)', cash.brutto?.amount, newBruttoAmount);
+        pushHistory(
+          'brutto (kelishilgan narx)',
+          cash.brutto?.amount,
+          newBruttoAmount,
+        );
 
         if (cash.brutto) {
           await bruttoRepo.update(
@@ -729,10 +775,12 @@ export class CashService {
 
   //--------------------------------Admin-----------------------------------//
 
-  getUsers(req: UserReq) {
-    if (req.role == 'ADMIN') {
-      return this.userRepository.find();
+  async getUsers(req: UserReq) {
+    const user = await this.userRepository.findOne({ where: { id: req.id } });
+    if (!user) {
+      return [];
     }
+    return this.userRepository.find();
   }
 
   updateUser(user: UserReq, id: number, body: UpdateUserDto) {
@@ -777,13 +825,21 @@ export class CashService {
     },
     user: UserReq,
   ) {
-    const userDb = await this.userRepository.findOne({ where: { id: user.id } });
+    const userDb = await this.userRepository.findOne({
+      where: { id: user.id },
+    });
 
     const safeLimit = Math.min(Math.max(params.limit, 1), 100);
     const safePage = Math.max(params.page, 1);
 
     if (!userDb || userDb.type !== 'ADMIN') {
-      return { items: [], total: 0, page: safePage, limit: safeLimit, totalPages: 0 };
+      return {
+        items: [],
+        total: 0,
+        page: safePage,
+        limit: safeLimit,
+        totalPages: 0,
+      };
     }
 
     const { userId, search, from, to } = params;
@@ -801,7 +857,8 @@ export class CashService {
         { search: `%${search}%` },
       );
     }
-    if (from) qb.andWhere('history.created_at >= :from', { from: new Date(from) });
+    if (from)
+      qb.andWhere('history.created_at >= :from', { from: new Date(from) });
     if (to) {
       const toDate = new Date(to);
       toDate.setHours(23, 59, 59, 999);
@@ -834,9 +891,7 @@ export class CashService {
       throw new ForbiddenException('Bu cash sizga tegishli emas');
     }
 
-    const allowedRoles = TRANSITIONS[cash.status as CashStatus]?.[body.status] as
-      | Role[]
-      | undefined;
+    const allowedRoles = TRANSITIONS[cash.status as CashStatus]?.[body.status];
     if (!allowedRoles || !allowedRoles.includes(user.role as Role)) {
       throw new BadRequestException(
         `${cash.status} -> ${body.status} o'tishga ruxsat yo'q`,
@@ -857,7 +912,11 @@ export class CashService {
     return { id, status: body.status };
   }
 
-  private async notifyStatusChange(cash: Cash, next: CashStatus, actor: UserReq) {
+  private async notifyStatusChange(
+    cash: Cash,
+    next: CashStatus,
+    actor: UserReq,
+  ) {
     const messages: Partial<Record<CashStatus, string>> = {
       pending_approval: `Xodim kassa №${cash.cash_number}ni tasdiqlashga yubordi`,
       approved: `Kassa №${cash.cash_number} tasdiqlandi`,
@@ -872,10 +931,14 @@ export class CashService {
     const recipients =
       actor.role === 'ADMIN'
         ? [cash.user.id]
-        : (await this.userRepository.find({ where: { type: 'ADMIN' } })).map((a) => a.id);
+        : (await this.userRepository.find({ where: { type: 'ADMIN' } })).map(
+            (a) => a.id,
+          );
 
     for (const userId of recipients) {
-      const targetUser = await this.userRepository.findOne({ where: { id: userId } });
+      const targetUser = await this.userRepository.findOne({
+        where: { id: userId },
+      });
       if (!targetUser) continue;
       await this.botService.sendMessage(targetUser.telegram_id, sms);
       await this.notificationRepository.save(
@@ -905,19 +968,13 @@ export class CashService {
   //--------------------------------ServiceType / Service (katalog)-----------------------------------//
 
   getCompanyTypeById(user: UserReq, id: number) {
-    if (user.role !== 'ADMIN') {
-      throw new ForbiddenException();
-    }
     return this.serviceTypeRepository.findOne({
       where: { id },
       relations: { services: true },
     });
   }
 
-  getCompanyType(user: UserReq) {
-    if (user.role !== 'ADMIN') {
-      throw new ForbiddenException();
-    }
+  getCompanyType() {
     return this.serviceTypeRepository.find();
   }
 
@@ -964,8 +1021,14 @@ export class CashService {
       relations: CASH_RELATIONS,
     });
 
-    const byMonthMap = new Map<string, { revenue: number; profit: number; count: number }>();
-    const byDayMap = new Map<string, { revenue: number; profit: number; count: number }>();
+    const byMonthMap = new Map<
+      string,
+      { revenue: number; profit: number; count: number }
+    >();
+    const byDayMap = new Map<
+      string,
+      { revenue: number; profit: number; count: number }
+    >();
 
     for (const cash of cashes) {
       const d = new Date(cash.created_at);
@@ -1004,7 +1067,12 @@ export class CashService {
     }
     const byMonth = monthLabels.map((m) => {
       const v = byMonthMap.get(m.key) ?? { revenue: 0, profit: 0, count: 0 };
-      return { label: m.label, revenue: Math.round(v.revenue), profit: Math.round(v.profit), count: v.count };
+      return {
+        label: m.label,
+        revenue: Math.round(v.revenue),
+        profit: Math.round(v.profit),
+        count: v.count,
+      };
     });
 
     const dayLabels: { label: string; key: string }[] = [];
@@ -1018,7 +1086,12 @@ export class CashService {
     }
     const byDay = dayLabels.map((d) => {
       const v = byDayMap.get(d.key) ?? { revenue: 0, profit: 0, count: 0 };
-      return { label: d.label, revenue: Math.round(v.revenue), profit: Math.round(v.profit), count: v.count };
+      return {
+        label: d.label,
+        revenue: Math.round(v.revenue),
+        profit: Math.round(v.profit),
+        count: v.count,
+      };
     });
 
     return { byMonth, byDay };
@@ -1026,46 +1099,47 @@ export class CashService {
 
   // YANGI: oy o'rniga aniq sana oralig'i (from/to) bo'yicha filtrlanadi.
   // departure_date kunlar darajasida solishtiriladi.
-  async getUserCashes(actor: UserReq, targetUserId: number, from?: string, to?: string) {
+  async getUserCashes(
+    actor: UserReq,
+    targetUserId: number,
+    startDate: string,
+    endDate: string,
+  ) {
     if (actor.role !== 'ADMIN') {
       throw new ForbiddenException();
     }
 
-    const targetUser = await this.userRepository.findOne({ where: { id: targetUserId } });
+    if (!startDate || !endDate) {
+      throw new BadRequestException('startDate va endDate majburiy');
+    }
+
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+      throw new BadRequestException(
+        `Noto'g'ri sana formati: startDate="${startDate}", endDate="${endDate}"`,
+      );
+    }
+
+    const targetUser = await this.userRepository.findOne({
+      where: { id: targetUserId },
+    });
     if (!targetUser) {
       throw new NotFoundException('Foydalanuvchi topilmadi');
     }
 
-    const where: any = { user: { id: targetUserId } };
+    const where: any = {
+      user: { id: targetUserId },
+      created_at: Between(start, end),
+    };
 
-    if (from && to) {
-      where.departure_date = Between(from, to);
-    } else if (from) {
-      where.departure_date = Between(from, from);
-      // faqat "from" kelsa, aslida diapazon yo'q - shuning uchun oxirgi
-      // sanagacha ochiq qoldiramiz (MoreThanOrEqual bilan)
-    }
-
-    // "from" bo'lib "to" bo'lmasa yoki aksincha bo'lsa, TypeORM Between()ga
-    // ikkalasi ham kerak - shu sababli quyida to'g'ri operatorlarni tanlaymiz.
-    let dateWhere: any = undefined;
-    if (from && to) {
-      dateWhere = Between(from, to);
-    } else if (from && !to) {
-      dateWhere = MoreThanOrEqual(from);
-    } else if (!from && to) {
-      dateWhere = LessThanOrEqual(to);
-    }
-    if (dateWhere) {
-      where.departure_date = dateWhere;
-    }
-  
     const cashes = await this.cashRepository.find({
       where,
       relations: CASH_RELATIONS,
       order: { departure_date: 'ASC' },
     });
-  
+
     const items = cashes.map((cash) => {
       const brutto = this.getBrutto(cash);
       const netto = this.getNetto(cash);
@@ -1081,10 +1155,10 @@ export class CashService {
         profit,
       };
     });
-  
+
     const totalProfit = items.reduce((sum, i) => sum + i.profit, 0);
     const bonus = totalProfit / 20;
-  
+
     return {
       user: {
         id: targetUser.id,

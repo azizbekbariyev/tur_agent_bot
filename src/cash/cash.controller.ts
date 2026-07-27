@@ -157,8 +157,8 @@ export class CashController {
   }
 
   @Get('company/type')
-  getCompanyType(@Req() req: Request) {
-    return this.cashService.getCompanyType(req.user);
+  getCompanyType() {
+    return this.cashService.getCompanyType();
   }
 
   @Get('cash/:id')
@@ -185,9 +185,9 @@ export class CashController {
   getUserCashes(
     @Req() req: Request,
     @Param('id') id: number,
-    @Query('from') from?: string,
-    @Query('to') to?: string,
+    @Query('startDate') startDate: string,
+    @Query('endDate') endDate: string,
   ) {
-    return this.cashService.getUserCashes(req.user, id, from, to);
+    return this.cashService.getUserCashes(req.user, id, startDate, endDate);
   }
 }
