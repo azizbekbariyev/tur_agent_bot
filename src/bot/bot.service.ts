@@ -87,6 +87,12 @@ export class BotService {
       const token = await this.generateToken(user);
       await ctx.reply(
         `Hurmatli foydalanuvchi, xizmatlardan foydalanish uchun quyidagi tugmani bosing.\n\n${process.env.APP_URL}/?token=${token}`,
+        Markup.inlineKeyboard([
+          Markup.button.webApp(
+            '🚀 Mini Appni ochish',
+            'https://tur-agent.test-prava.uz/?token=' + token,
+          ),
+        ]),
       );
       return;
     } else if (ctx.from!.id == Number(process.env.ADMIN)) {
