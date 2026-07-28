@@ -13,6 +13,7 @@ async function start() {
     const allowedOrigins = [
       'https://tur-agent.test-prava.uz',
       'http://localhost:5173',
+      'https://turagent.test-prava.uz',
     ];
 
     app.enableCors({
