@@ -249,8 +249,8 @@ export class CashService {
           }),
           ...(dto.status &&
             dto.status !== 'ALL' && {
-              status: dto.status,
-            }),
+            status: dto.status,
+          }),
         },
         relations: CASH_RELATIONS,
       });
@@ -941,8 +941,8 @@ export class CashService {
       actor.role === 'ADMIN'
         ? [cash.user.id]
         : (await this.userRepository.find({ where: { type: 'ADMIN' } })).map(
-            (a) => a.id,
-          );
+          (a) => a.id,
+        );
 
     for (const userId of recipients) {
       const targetUser = await this.userRepository.findOne({
@@ -1155,6 +1155,11 @@ export class CashService {
       const brutto = this.getBrutto(cash);
       const netto = this.getNetto(cash);
       const profit = brutto - netto;
+
+      // Juma bo'lsa 25%, aks holda 20%
+      const day = new Date(cash.created_at).getDay(); // 0=Yakshanba ... 5=Juma
+      const bonus = day === 5 ? profit * 0.25 : profit * 0.2;
+
       return {
         id: cash.id,
         cashNumber: cash.cash_number,
@@ -1164,11 +1169,12 @@ export class CashService {
         brutto,
         netto,
         profit,
+        bonus,
       };
     });
 
     const totalProfit = items.reduce((sum, i) => sum + i.profit, 0);
-    const bonus = totalProfit / 20;
+    const totalBonus = items.reduce((sum, i) => sum + i.bonus, 0);
 
     return {
       user: {
@@ -1178,7 +1184,7 @@ export class CashService {
       },
       items,
       totalProfit,
-      bonus,
+      totalBonus,
     };
   }
 
