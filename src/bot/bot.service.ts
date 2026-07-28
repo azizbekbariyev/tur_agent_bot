@@ -94,6 +94,7 @@ export class BotService {
           ),
         ]),
       );
+      console.log('user.telegram_id', token);
       return;
     } else if (ctx.from!.id == Number(process.env.ADMIN)) {
       const newUser = await this.userRepository.save({
