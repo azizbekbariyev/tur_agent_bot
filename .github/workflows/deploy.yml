@@ -4,9 +4,7 @@ on:
   push:
     branches:
       - main
-    paths:
-      - "bot_1/tur_agent_bot/**"
-      - "bot_2/tur_agent_bot/**"
+  workflow_dispatch:
 
 jobs:
   deploy:
@@ -21,22 +19,20 @@ jobs:
           key: ${{ secrets.VPS_SSH_KEY }}
           port: 22
           script: |
-            cd tur_agent_bot
+            # ---------- BOT 1 BACKEND ----------
+            cd ~/bot_1/tur_agent_bot
             git fetch origin
             git reset --hard origin/main
-
-            # ---------- BOT 1 BACKEND ----------
-            cd bot_1/tur_agent_bot
             npm install
             npm run build
             pm2 restart bot-1-back || pm2 start dist/main.js --name bot-1-back
-            cd ../..
 
             # ---------- BOT 2 BACKEND ----------
-            cd bot_2/tur_agent_bot
+            cd ~/bot_2/tur_agent_bot
+            git fetch origin
+            git reset --hard origin/main
             npm install
             npm run build
             pm2 restart bot-2-back || pm2 start dist/main.js --name bot-2-back
-            cd ../..
 
             pm2 save
