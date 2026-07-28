@@ -82,11 +82,11 @@ export class BotService {
     const user = await this.userRepository.findOne({
       where: { telegram_id: ctx.from!.id },
     });
-
+    //.\n\n${process.env.APP_URL}/?token=${token}
     if (user && user.status) {
       const token = await this.generateToken(user);
       await ctx.reply(
-        `Hurmatli foydalanuvchi, xizmatlardan foydalanish uchun quyidagi tugmani bosing.\n\n${process.env.APP_URL}/?token=${token}`,
+        `Hurmatli foydalanuvchi, xizmatlardan foydalanish uchun quyidagi tugmani bosing`,
         Markup.inlineKeyboard([
           Markup.button.webApp(
             '🚀 Mini Appni ochish',
