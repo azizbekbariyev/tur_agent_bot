@@ -247,25 +247,23 @@ export class CashService {
         }),
         ...(dto.status &&
           dto.status !== 'ALL' && {
-            status: dto.status,
-          }),
+          status: dto.status,
+        }),
       };
 
       const where = search
         ? [
-            // 1-shart: cash_number mos kelsa
-            {
-              ...baseWhere,
-              cash_number: ILike(`${search}%`),
+          {
+            ...baseWhere,
+            cash_number: ILike(`${search}%`),
+          },
+          {
+            ...baseWhere,
+            cashServices: {
+              code: ILike(`${search}%`),
             },
-            // 2-shart: YOKI ichidagi xizmat kodi mos kelsa
-            {
-              ...baseWhere,
-              cashServices: {
-                code: ILike(`${search}%`),
-              },
-            },
-          ]
+          },
+        ]
         : baseWhere;
 
       const cashes = await this.cashRepository.find({
@@ -317,16 +315,24 @@ export class CashService {
         throw new BadRequestException('Tanlangan xizmatlardan biri topilmadi');
       }
 
-      // Netto - xizmatlar har doim USD deb hisoblanadi: service_amount * currency_amount(kurs)
+      // UZS uchun kurs har doim 1 - himoya
+      const rateOf = (currency: string, rate: number) =>
+        currency === 'UZS' ? 1 : rate;
+
+      // Netto - har bir xizmat o'z valyutasidan so'mga o'tkaziladi
       const netto = body.services.reduce(
-        (sum, s) => sum + s.service_amount * s.currency_amount,
+        (sum, s) =>
+          sum + s.service_amount * rateOf(s.currency, s.currency_amount),
         0,
       );
 
       const brutto = await bruttoRepo.save({
         amount: body.brutto.amount.toFixed(2),
         currency: body.brutto.currency,
-        currency_amount: body.brutto.currency_amount,
+        currency_amount: rateOf(
+          body.brutto.currency,
+          body.brutto.currency_amount,
+        ),
       });
 
       const cash = await cashRepo.save({
@@ -351,7 +357,8 @@ export class CashService {
           cashServicesRepo.save({
             code: s.code,
             service_amount: s.service_amount,
-            currency_amount: s.currency_amount,
+            currency: s.currency,
+            currency_amount: rateOf(s.currency, s.currency_amount),
             cash: { id: cash.id },
             service: { id: s.service_id },
           }),
@@ -363,7 +370,7 @@ export class CashService {
           moneyRepo.save({
             money_received: m.money_received,
             currency: m.currency,
-            currency_amount: m.currency_amount,
+            currency_amount: rateOf(m.currency, m.currency_amount),
             type: m.type,
             cash: { id: cash.id },
           }),
@@ -489,6 +496,9 @@ export class CashService {
         historyEntries.push({ name, old_column: oldStr, new_column: newStr });
       };
 
+      const rateOf = (currency: string, rate: number) =>
+        currency === 'UZS' ? 1 : rate;
+
       // ---- Passengers: o'chirish ----
       if (body.deletedPassengerIds?.length) {
         const toDelete = await passengerRepo.find({
@@ -592,9 +602,14 @@ export class CashService {
                 s.service_amount,
               );
               pushHistory(
+                `xizmat #${s.id} valyuta`,
+                before.currency,
+                s.currency,
+              );
+              pushHistory(
                 `xizmat #${s.id} kurs`,
                 before.currency_amount,
-                s.currency_amount,
+                rateOf(s.currency, s.currency_amount),
               );
               pushHistory(`xizmat #${s.id} kod`, before.code, s.code);
             }
@@ -603,7 +618,8 @@ export class CashService {
               {
                 code: s.code,
                 service_amount: s.service_amount,
-                currency_amount: s.currency_amount,
+                currency: s.currency,
+                currency_amount: rateOf(s.currency, s.currency_amount),
                 service: { id: s.service_id },
               },
             );
@@ -611,7 +627,8 @@ export class CashService {
             const created = cashServicesRepo.create({
               code: s.code,
               service_amount: s.service_amount,
-              currency_amount: s.currency_amount,
+              currency: s.currency,
+              currency_amount: rateOf(s.currency, s.currency_amount),
               cash,
               service: { id: s.service_id } as Service,
             });
@@ -744,11 +761,10 @@ export class CashService {
 
       // Netto - xizmatlar har doim USD deb hisoblanadi
       const newNetto = finalCashServices
-        .reduce(
-          (sum, cs) =>
-            sum + Number(cs.service_amount) * Number(cs.currency_amount),
-          0,
-        )
+        .reduce((sum, cs) => {
+          const rate = cs.currency === 'UZS' ? 1 : Number(cs.currency_amount);
+          return sum + Number(cs.service_amount) * rate;
+        }, 0)
         .toFixed(2);
 
       pushHistory('turist_count', cash.turist_count, newTuristCount);

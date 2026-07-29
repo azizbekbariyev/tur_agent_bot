@@ -20,6 +20,13 @@ export class CashServices {
   service_amount!: number;
 
   @Column({
+    type: 'enum',
+    enum: ['USD', 'UZS', 'EUR'],
+    default: 'USD',
+  })
+  currency!: string;
+
+  @Column({
     type: 'numeric',
     precision: 15,
     scale: 2,

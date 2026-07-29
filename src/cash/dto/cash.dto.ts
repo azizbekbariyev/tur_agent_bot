@@ -93,6 +93,9 @@ export class CashServiceItemDto {
   @IsPositive()
   service_amount!: number;
 
+  @IsEnum(Currency)
+  currency!: Currency;
+
   // 1 USD = necha so'm (shu xizmat yozuvi uchun ALOHIDA kurs)
   @IsNumber()
   currency_amount!: number;
@@ -220,7 +223,7 @@ export class UpdatePassengerDto {
 export class UpdateCashServiceDto {
   @IsOptional()
   @IsInt()
-  id?: number; // mavjud CashServices.id (bo'lsa - yangilanadi, bo'lmasa - yangi yaratiladi)
+  id?: number;
 
   @IsInt()
   service_id!: number;
@@ -232,6 +235,9 @@ export class UpdateCashServiceDto {
   @IsNumber()
   @IsPositive()
   service_amount!: number;
+
+  @IsEnum(Currency)
+  currency!: Currency;
 
   @IsNumber()
   currency_amount!: number;
