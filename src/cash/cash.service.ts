@@ -239,19 +239,37 @@ export class CashService {
           lastName: cash.user.last_name,
         }));
     } else {
-      const cashes = await this.cashRepository.find({
-        where: {
-          ...(user.role !== 'ADMIN' && {
-            user: { id: user.id },
-          }),
-          ...(dto.cashNumber && {
-            cash_number: ILike(`${dto.cashNumber}%`),
-          }),
-          ...(dto.status &&
-            dto.status !== 'ALL' && {
+      const search = dto.cashNumber?.trim();
+
+      const baseWhere = {
+        ...(user.role !== 'ADMIN' && {
+          user: { id: user.id },
+        }),
+        ...(dto.status &&
+          dto.status !== 'ALL' && {
             status: dto.status,
           }),
-        },
+      };
+
+      const where = search
+        ? [
+            // 1-shart: cash_number mos kelsa
+            {
+              ...baseWhere,
+              cash_number: ILike(`${search}%`),
+            },
+            // 2-shart: YOKI ichidagi xizmat kodi mos kelsa
+            {
+              ...baseWhere,
+              cashServices: {
+                code: ILike(`${search}%`),
+              },
+            },
+          ]
+        : baseWhere;
+
+      const cashes = await this.cashRepository.find({
+        where,
         relations: CASH_RELATIONS,
       });
 
