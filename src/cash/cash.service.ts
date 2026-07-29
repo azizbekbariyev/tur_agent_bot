@@ -322,6 +322,7 @@ export class CashService {
         netto: netto.toFixed(2),
         user: { id: user.id },
         brutto: { id: brutto.id },
+        ...(body.created_at ? { created_at: new Date(body.created_at) } : {}),
         ...(body.additional_user_id
           ? { additionalUser: { id: body.additional_user_id } }
           : {}),

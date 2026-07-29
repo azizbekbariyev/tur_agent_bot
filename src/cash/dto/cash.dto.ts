@@ -148,6 +148,10 @@ export class CreateCashDto {
   @IsString()
   comment!: string;
 
+  @IsOptional()
+  @IsDateString()
+  created_at?: string;
+
   @IsInt()
   turist_count!: number;
 
@@ -280,6 +284,10 @@ export class UpdateCashDto {
   @IsOptional()
   @IsString()
   comment?: string;
+
+  @IsOptional()
+  @IsDateString()
+  created_at?: string;
 
   @IsOptional()
   @IsDateString()
