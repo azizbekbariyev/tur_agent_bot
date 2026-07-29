@@ -683,6 +683,14 @@ export class CashService {
         pushHistory('cash_number', cash.cash_number, body.cash_number);
         patch.cash_number = body.cash_number;
       }
+      if (body.created_at !== undefined) {
+        pushHistory(
+          'created_at (kassa sanasi)',
+          cash.created_at?.toISOString(),
+          body.created_at,
+        );
+        patch.created_at = new Date(body.created_at);
+      }
       if (body.additional_user_id !== undefined) {
         pushHistory('additional_user_id', undefined, body.additional_user_id);
         (patch as any).additionalUser = { id: body.additional_user_id };
