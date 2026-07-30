@@ -60,7 +60,7 @@ const TRANSITIONS: Record<CashStatus, Partial<Record<CashStatus, Role[]>>> = {
   },
   sent_for_rework: {
     pending_approval: ['EMPLOYEE', 'ADMIN'],
-    cancelled: ['EMPLOYEE'],
+    cancelled: ['EMPLOYEE', 'ADMIN'],
   },
   closed: {
     approved: ['ADMIN'], // qayta ochish
@@ -168,6 +168,42 @@ export class CashService {
     return this.getBrutto(cash) - this.getNetto(cash);
   }
 
+  // ---- Notification yordamchi funksiyalari ----
+
+  /** Bitta userga sms + notification yuboradi (xato bo'lsa yiqilmaydi) */
+  private async notifyUser(userId: number, sms: string) {
+    const targetUser = await this.userRepository.findOne({
+      where: { id: userId },
+    });
+    if (!targetUser) return;
+
+    try {
+      await this.botService.sendMessage(targetUser.telegram_id, sms);
+    } catch (e) {
+      // bot yuborolmasa ham notification bazada qoladi
+      console.error(`SMS yuborilmadi (user ${userId}):`, e);
+    }
+
+    await this.notificationRepository.save(
+      this.notificationRepository.create({
+        sms,
+        type: 'cash',
+        user: { id: userId },
+      }),
+    );
+  }
+
+  /** Barcha ADMIN'larga sms + notification yuboradi */
+  private async notifyAdmins(sms: string) {
+    const admins = await this.userRepository.find({
+      where: { type: 'ADMIN' },
+    });
+
+    for (const admin of admins) {
+      await this.notifyUser(admin.id, sms);
+    }
+  }
+
   async getDashboard(user: UserReq, dto: DashboardFilterDto) {
     const where: any = {
       created_at: Between(new Date(dto.startDate), new Date(dto.endDate)),
@@ -247,23 +283,23 @@ export class CashService {
         }),
         ...(dto.status &&
           dto.status !== 'ALL' && {
-          status: dto.status,
-        }),
+            status: dto.status,
+          }),
       };
 
       const where = search
         ? [
-          {
-            ...baseWhere,
-            cash_number: ILike(`${search}%`),
-          },
-          {
-            ...baseWhere,
-            cashServices: {
-              code: ILike(`${search}%`),
+            {
+              ...baseWhere,
+              cash_number: ILike(`${search}%`),
             },
-          },
-        ]
+            {
+              ...baseWhere,
+              cashServices: {
+                code: ILike(`${search}%`),
+              },
+            },
+          ]
         : baseWhere;
 
       const cashes = await this.cashRepository.find({
@@ -391,6 +427,14 @@ export class CashService {
       return cash.id;
     });
 
+    // Yangi kassa to'g'ridan-to'g'ri tasdiqlashga yuborilgan bo'lsa - adminlarga xabar.
+    // Transaction TASHQARISIDA - telegram sekin ishlasa ham transaction ochiq qolmaydi.
+    if (body.status === 'pending_approval') {
+      await this.notifyAdmins(
+        `Yangi kassa №${body.cash_number} yaratildi va tasdiqlashga yuborildi`,
+      );
+    }
+
     return this.getCash(user, cashId);
   }
 
@@ -463,7 +507,7 @@ export class CashService {
       throw new NotFoundException('User not found');
     }
 
-    return this.dataSource.transaction(async (manager) => {
+    const result = await this.dataSource.transaction(async (manager) => {
       const cashRepo = manager.getRepository(Cash);
       const passengerRepo = manager.getRepository(Passenger);
       const cashServicesRepo = manager.getRepository(CashServices);
@@ -478,6 +522,8 @@ export class CashService {
       if (!cash) {
         throw new NotFoundException('Cash not found');
       }
+
+      const oldStatus = cash.status as CashStatus;
 
       const historyEntries: Array<{
         name: string;
@@ -589,54 +635,72 @@ export class CashService {
 
       // ---- CashServices: yangilash yoki yaratish ----
       if (body.services?.length) {
+        // Katalogda mavjudligini tekshirish (create bilan bir xil himoya)
+        const serviceRepo = manager.getRepository(Service);
+        const serviceIds = [...new Set(body.services.map((s) => s.service_id))];
+        const foundServices = await serviceRepo.find({
+          where: { id: In(serviceIds) },
+        });
+        if (foundServices.length !== serviceIds.length) {
+          throw new BadRequestException(
+            'Tanlangan xizmatlardan biri topilmadi',
+          );
+        }
+
         for (const s of body.services) {
           if (s.id) {
+            // service_id ni where'ga QO'SHMAYMIZ - faqat id + cash bo'yicha topamiz
             const before = await cashServicesRepo.findOne({
               where: { id: s.id, cash: { id } },
               relations: { service: true },
             });
-            if (before) {
-              pushHistory(
-                `xizmat #${s.id} summa`,
-                before.service_amount,
-                s.service_amount,
-              );
-              pushHistory(
-                `xizmat #${s.id} valyuta`,
-                before.currency,
-                s.currency,
-              );
-              pushHistory(
-                `xizmat #${s.id} kurs`,
-                before.currency_amount,
-                rateOf(s.currency, s.currency_amount),
-              );
-              pushHistory(`xizmat #${s.id} kod`, before.code, s.code);
+
+            if (!before) {
+              throw new NotFoundException(`Xizmat #${s.id} topilmadi`);
             }
-            await cashServicesRepo.update(
-              { id: s.id, cash: { id } },
-              {
-                code: s.code,
-                service_amount: s.service_amount,
-                currency: s.currency,
-                currency_amount: rateOf(s.currency, s.currency_amount),
-                service: { id: s.service_id },
-              },
+
+            // service_id o'zgargan bo'lsa - relationni yangilaymiz
+            if (before.service?.id !== s.service_id) {
+              pushHistory(
+                `xizmat #${s.id} service_id`,
+                before.service?.id,
+                s.service_id,
+              );
+              before.service = { id: s.service_id } as Service;
+            }
+
+            pushHistory(
+              `xizmat #${s.id} summa`,
+              before.service_amount,
+              s.service_amount,
             );
+            pushHistory(`xizmat #${s.id} valyuta`, before.currency, s.currency);
+            pushHistory(
+              `xizmat #${s.id} kurs`,
+              before.currency_amount,
+              rateOf(s.currency, s.currency_amount),
+            );
+            pushHistory(`xizmat #${s.id} kod`, before.code, s.code);
+
+            before.code = s.code ?? before.code;
+            before.service_amount = s.service_amount;
+            before.currency = s.currency;
+            before.currency_amount = rateOf(s.currency, s.currency_amount);
+            await cashServicesRepo.save(before);
           } else {
             const created = cashServicesRepo.create({
               code: s.code,
               service_amount: s.service_amount,
               currency: s.currency,
               currency_amount: rateOf(s.currency, s.currency_amount),
-              cash,
+              cash: { id } as Cash, // to'liq entity emas, faqat id yetarli
               service: { id: s.service_id } as Service,
             });
             const saved = await cashServicesRepo.save(created);
             pushHistory(
               `xizmat #${saved.id} qo'shildi`,
               '—',
-              `service_id=${s.service_id}`,
+              `${saved.code ?? ''} / service_id=${s.service_id}`,
             );
           }
         }
@@ -818,11 +882,27 @@ export class CashService {
         await historyRepo.save(historyRows);
       }
 
-      return cashRepo.findOne({
+      const updated = await cashRepo.findOne({
         where: { id },
         relations: CASH_RELATIONS,
       });
+
+      return { updated, oldStatus };
     });
+
+    // Edit paytida status pending_approval'ga O'TGAN bo'lsa - adminlarga xabar.
+    // oldStatus tekshiruvi muhim: pending kassani shunchaki edit qilsa qayta sms ketmaydi.
+    // Transaction TASHQARISIDA yuboriladi.
+    if (
+      body.status === 'pending_approval' &&
+      result.oldStatus !== 'pending_approval'
+    ) {
+      await this.notifyAdmins(
+        `Kassa №${result.updated?.cash_number} tasdiqlashga yuborildi`,
+      );
+    }
+
+    return result.updated;
   }
 
   //--------------------------------Admin-----------------------------------//
@@ -980,26 +1060,25 @@ export class CashService {
     const sms = messages[next];
     if (!sms) return;
 
-    const recipients =
-      actor.role === 'ADMIN'
-        ? [cash.user.id]
-        : (await this.userRepository.find({ where: { type: 'ADMIN' } })).map(
-          (a) => a.id,
-        );
+    const adminIds = (
+      await this.userRepository.find({ where: { type: 'ADMIN' } })
+    ).map((a) => a.id);
+
+    let recipients: number[];
+    if (next === 'closed' || next === 'cancelled') {
+      // Yopilganda/bekor qilinganda - adminlarga HAM, kassa egasiga HAM boradi.
+      // Set - kassa egasi o'zi admin bo'lsa ikki marta sms ketmasligi uchun.
+      recipients = [...new Set([...adminIds, cash.user.id])];
+    } else if (actor.role === 'ADMIN') {
+      // Admin harakat qilgan bo'lsa (approved, sent_for_rework) - kassa egasiga
+      recipients = [cash.user.id];
+    } else {
+      // Xodim harakat qilgan bo'lsa (pending_approval) - adminlarga
+      recipients = adminIds;
+    }
 
     for (const userId of recipients) {
-      const targetUser = await this.userRepository.findOne({
-        where: { id: userId },
-      });
-      if (!targetUser) continue;
-      await this.botService.sendMessage(targetUser.telegram_id, sms);
-      await this.notificationRepository.save(
-        this.notificationRepository.create({
-          sms,
-          type: 'cash',
-          user: { id: userId },
-        }),
-      );
+      await this.notifyUser(userId, sms);
     }
   }
 
