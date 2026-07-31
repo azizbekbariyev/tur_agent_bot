@@ -200,4 +200,9 @@ export class CashController {
   deleteServiceType(@Req() req: Request, @Param('id') id: number) {
     return this.cashService.deleteServiceType(req.user, id);
   }
+
+  @Delete('cash/:id')
+  deleteCash(@Req() req: Request, @Param('id') id: number) {
+    return this.cashService.deleteCash(req.user, id);
+  }
 }

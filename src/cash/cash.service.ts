@@ -1343,4 +1343,39 @@ export class CashService {
     }
     return this.serviceTypeRepository.update({ id }, { is_active: false });
   }
+
+  async deleteCash(actor: UserReq, id: number) {
+    if (actor.role !== 'ADMIN') {
+      throw new ForbiddenException();
+    }
+
+    const cash = await this.cashRepository.findOne({
+      where: { id },
+      relations: {
+        brutto: true,
+      },
+    });
+
+    if (!cash) {
+      throw new NotFoundException('Cash not found');
+    }
+
+    await this.dataSource.transaction(async (manager) => {
+      // 1. Bolalarini o'chiramiz (cash ga FK bilan bog'langanlar)
+      await manager.delete(Money, { cash: { id } });
+      await manager.delete(Passenger, { cash: { id } });
+      await manager.delete(CashServices, { cash: { id } });
+      await manager.delete(History, { cash: { id } });
+
+      // 2. Cash ni o'zini o'chiramiz (brutto_id FK shu jadvalda)
+      await manager.delete(Cash, { id });
+
+      // 3. Endi brutto ni o'chirsak bo'ladi
+      if (cash.brutto) {
+        await manager.delete(Brutto, { id: cash.brutto.id });
+      }
+    });
+
+    return { success: true };
+  }
 }
