@@ -129,6 +129,12 @@ export class CashService {
     return amount * (rate || 0);
   }
 
+  private roundToNearestThousand(amount: number): number {
+    const remainder = amount % 1000;
+    const base = amount - remainder;
+    return remainder >= 500 ? base + 1000 : base;
+  }
+
   /** Brutto - mijoz bilan kelishilgan umumiy narx, so'mga o'tkazilgan holda */
   private getBrutto(cash: Cash): number {
     if (!cash.brutto) return 0;
@@ -140,12 +146,12 @@ export class CashService {
   /** Netto - CashServices (xizmatlar) yig'indisi, so'mda. Xizmatlar har doim USD. */
   private getNetto(cash: Cash): number {
     if (!cash.cashServices?.length) return 0;
-    return cash.cashServices.reduce((sum, cs) => {
+    const raw = cash.cashServices.reduce((sum, cs) => {
       const amount = Number(cs.service_amount ?? 0);
       const rate = Number(cs.currency_amount ?? 0);
-      // CashServices'da currency ustuni yo'q - har doim USD deb hisoblanadi
       return sum + amount * rate;
     }, 0);
+    return this.roundToNearestThousand(raw);
   }
 
   /** Mijozdan haqiqatda olingan pul, so'mga o'tkazilgan holda */
@@ -283,23 +289,23 @@ export class CashService {
         }),
         ...(dto.status &&
           dto.status !== 'ALL' && {
-            status: dto.status,
-          }),
+          status: dto.status,
+        }),
       };
 
       const where = search
         ? [
-            {
-              ...baseWhere,
-              cash_number: ILike(`${search}%`),
+          {
+            ...baseWhere,
+            cash_number: ILike(`${search}%`),
+          },
+          {
+            ...baseWhere,
+            cashServices: {
+              code: ILike(`${search}%`),
             },
-            {
-              ...baseWhere,
-              cashServices: {
-                code: ILike(`${search}%`),
-              },
-            },
-          ]
+          },
+        ]
         : baseWhere;
 
       const cashes = await this.cashRepository.find({
@@ -356,10 +362,12 @@ export class CashService {
         currency === 'UZS' ? 1 : rate;
 
       // Netto - har bir xizmat o'z valyutasidan so'mga o'tkaziladi
-      const netto = body.services.reduce(
-        (sum, s) =>
-          sum + s.service_amount * rateOf(s.currency, s.currency_amount),
-        0,
+      const netto = this.roundToNearestThousand(
+        body.services.reduce(
+          (sum, s) =>
+            sum + s.service_amount * rateOf(s.currency, s.currency_amount),
+          0,
+        ),
       );
 
       const brutto = await bruttoRepo.save({
@@ -824,12 +832,12 @@ export class CashService {
       const newTuristCount = finalPassengers.length;
 
       // Netto - xizmatlar har doim USD deb hisoblanadi
-      const newNetto = finalCashServices
-        .reduce((sum, cs) => {
+      const newNetto = this.roundToNearestThousand(
+        finalCashServices.reduce((sum, cs) => {
           const rate = cs.currency === 'UZS' ? 1 : Number(cs.currency_amount);
           return sum + Number(cs.service_amount) * rate;
-        }, 0)
-        .toFixed(2);
+        }, 0),
+      ).toFixed(2);
 
       pushHistory('turist_count', cash.turist_count, newTuristCount);
       pushHistory('netto', cash.netto, newNetto);

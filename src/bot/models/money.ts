@@ -12,25 +12,38 @@ export class Money {
   @PrimaryGeneratedColumn()
   id!: number;
 
-  //qabul qilingan pul
-  @Column()
+  @Column({
+    type: 'numeric',
+    precision: 15,
+    scale: 2,
+    transformer: {
+      to: (value: number) => value,
+      from: (value: string) => parseFloat(value),
+    },
+  })
   money_received!: number;
 
-  //turi naqt, karta yoki o'tkazma orqali
   @Column({
     type: 'enum',
     enum: ['CASH', 'CARD', 'TRANSFER'],
   })
   type!: string;
 
-  //valyuta
   @Column({
     type: 'enum',
     enum: ['UZS', 'USD', 'EUR'],
   })
   currency!: string;
 
-  @Column()
+  @Column({
+    type: 'numeric',
+    precision: 15,
+    scale: 2,
+    transformer: {
+      to: (value: number) => value,
+      from: (value: string) => parseFloat(value),
+    },
+  })
   currency_amount!: number;
 
   @ManyToOne(() => Cash, (cash) => cash.moneys)
