@@ -166,12 +166,16 @@ export class CashService {
 
   /** Qarz = Brutto - to'langan summa (ikkalasi ham so'mda) */
   private getDebt(cash: Cash): number {
-    return this.getBrutto(cash) - this.getPaidAmount(cash);
+    return this.roundToNearestThousand(
+      this.getBrutto(cash) - this.getPaidAmount(cash),
+    );
   }
 
   /** Foyda = Brutto - Netto (ikkalasi ham so'mda) */
   private getProfit(cash: Cash): number {
-    return this.getBrutto(cash) - this.getNetto(cash);
+    return this.roundToNearestThousand(
+      this.getBrutto(cash) - this.getNetto(cash),
+    );
   }
 
   // ---- Notification yordamchi funksiyalari ----
@@ -1284,7 +1288,8 @@ export class CashService {
     const items = cashes.map((cash) => {
       const brutto = this.getBrutto(cash);
       const netto = this.getNetto(cash);
-      const profit = brutto - netto;
+      const profit = this.getProfit(cash);
+      const debt = this.getDebt(cash);
 
       // Juma bo'lsa 25%, aks holda 20%
       const day = new Date(cash.created_at).getDay(); // 0=Yakshanba ... 5=Juma
@@ -1299,12 +1304,16 @@ export class CashService {
         brutto,
         netto,
         profit,
+        debt,
         bonus,
       };
     });
 
     const totalProfit = items.reduce((sum, i) => sum + i.profit, 0);
     const totalBonus = items.reduce((sum, i) => sum + i.bonus, 0);
+    const totalBrutto = items.reduce((sum, i) => sum + i.brutto, 0);
+    const totalNetto = items.reduce((sum, i) => sum + i.netto, 0);
+    const totalDebt = items.reduce((sum, i) => sum + i.debt, 0);
 
     return {
       user: {
@@ -1315,6 +1324,9 @@ export class CashService {
       items,
       totalProfit,
       totalBonus,
+      totalBrutto,
+      totalNetto,
+      totalDebt,
     };
   }
 
