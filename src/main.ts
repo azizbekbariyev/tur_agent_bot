@@ -4,6 +4,7 @@ import { NestExpressApplication } from '@nestjs/platform-express';
 import { join } from 'path';
 import * as express from 'express';
 import cookieParser from 'cookie-parser';
+import { ValidationPipe } from '@nestjs/common';
 
 async function start() {
   try {
@@ -42,6 +43,9 @@ async function start() {
 
     app.use(cookieParser());
     app.setGlobalPrefix('api');
+    app.useGlobalPipes(
+      new ValidationPipe({ whitelist: true, transform: true }),
+    );
 
     await app.listen(PORT, () => {
       console.log(`🚀 Server started at http://localhost:${PORT}/api`);

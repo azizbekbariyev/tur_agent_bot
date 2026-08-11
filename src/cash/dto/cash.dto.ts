@@ -18,6 +18,7 @@ export enum CashStatus {
   CLOSED = 'closed',
   CANCELLED = 'cancelled',
   SENT_FOR_REWORK = 'sent_for_rework',
+  DUE = 'due',
 }
 
 export enum Currency {
@@ -59,6 +60,24 @@ export class CashesFilterDto {
   @IsOptional()
   @Type(() => String)
   status?: string;
+
+  @Type(() => Number)
+  @IsInt()
+  page!: number;
+
+  @Type(() => Number)
+  @IsInt()
+  limit!: number;
+
+  @IsOptional()
+  @Type(() => String)
+  userId?: string;
+
+  @IsString()
+  startDate!: string;
+
+  @IsString()
+  endDate!: string;
 }
 
 // ---- Brutto: mijoz to'lashi kerak bo'lgan jami summa ----
@@ -353,6 +372,10 @@ export class UpdateCashDto {
 export class UpdateCashStatusDto {
   @IsEnum(CashStatus)
   status!: CashStatus;
+
+  @IsOptional()
+  @IsString()
+  comment?: string;
 }
 
 export class CreateUserDto {
@@ -405,6 +428,9 @@ export class UpdateUserDto {
 export class CreateServiceTypeDto {
   @IsString()
   name!: string;
+
+  @IsString()
+  color!: string;
 }
 
 export class CreateServiceCompanyDto {

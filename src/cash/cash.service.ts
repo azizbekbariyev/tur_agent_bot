@@ -8,7 +8,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Cash } from 'src/bot/models/cash';
 import { Service } from 'src/bot/models/service';
 import { CashServices } from 'src/bot/models/cash_services';
-import { DataSource, In, Repository } from 'typeorm';
+import { DataSource, In, LessThan, Not, Repository } from 'typeorm';
 import { Passenger } from 'src/bot/models/passenger';
 import { Money } from 'src/bot/models/money';
 import { History } from 'src/bot/models/history';
@@ -16,6 +16,7 @@ import { Notification } from 'src/bot/models/notification';
 import { UserReq } from 'src/types/user.type';
 import {
   CashesFilterDto,
+  CashStatus,
   CreateCashDto,
   CreatePaymantDto,
   CreateServiceCompanyDto,
@@ -25,6 +26,7 @@ import {
   UpdateCashDto,
   UpdateCashStatusDto,
   UpdateUserDto,
+  UserStatus,
 } from './dto/cash.dto';
 import { Between } from 'typeorm';
 import { ILike } from 'typeorm';
@@ -32,15 +34,15 @@ import { User } from 'src/bot/models/user';
 import { BotService } from 'src/bot/bot.service';
 import { ServiceType } from '../bot/models/service_type';
 import { Brutto } from '../bot/models/brutto';
-
-type CashStatus =
-  | 'draft'
-  | 'pending_approval'
-  | 'approved'
-  | 'due'
-  | 'closed'
-  | 'cancelled'
-  | 'sent_for_rework';
+import { CashNotificationService } from './cash-notification.service';
+import {
+  getBrutto,
+  toUZS,
+  roundToNearestThousand,
+  getNetto,
+  getDebt,
+  getProfit,
+} from './cash.utils';
 
 type Role = 'ADMIN' | 'EMPLOYEE';
 
@@ -79,18 +81,6 @@ const CASH_RELATIONS = {
   brutto: true,
 } as const;
 
-// ---- Moliyaviy ta'riflar ----
-// Brutto  = mijoz to'lashi kerak bo'lgan JAMI summa (Brutto.amount, Brutto.currency)
-// Netto   = barcha CashServices (xizmatlar) yig'indisi, SO'MGA o'tkazilgan holda.
-//           Xizmatlar har doim USD deb hisoblanadi -> service_amount * currency_amount
-// To'langan = barcha Money yozuvlari yig'indisi, SO'MGA o'tkazilgan holda
-// Qarz    = Brutto(so'm) - To'langan(so'm)
-// Foyda   = Brutto(so'm) - Netto(so'm)
-//
-// Valyuta -> so'm aylantirish qoidasi: agar currency === 'UZS' bo'lsa, qiymat
-// allaqachon so'mda (aylantirish shart emas). Aks holda (USD yoki EUR),
-// amount * currency_amount(shu yozuvning o'z kursi) = so'm.
-
 @Injectable()
 export class CashService {
   constructor(
@@ -113,106 +103,8 @@ export class CashService {
     private readonly botService: BotService,
     @InjectRepository(ServiceType)
     private readonly serviceTypeRepository: Repository<ServiceType>,
-    @InjectRepository(Brutto)
-    private readonly bruttoRepository: Repository<Brutto>,
-  ) { }
-
-  // ---- Moliyaviy hisob-kitob yordamchi funksiyalari ----
-
-  /** UZS bo'lmasa (USD/EUR) kursga ko'paytiradi, UZS bo'lsa o'zgarishsiz qaytaradi */
-  private toUZS(
-    amount: number,
-    currency: string | undefined,
-    rate: number,
-  ): number {
-    if (currency === 'UZS') return amount;
-    return amount * (rate || 0);
-  }
-
-  private roundToNearestThousand(amount: number): number {
-    const remainder = amount % 1000;
-    const base = amount - remainder;
-    return remainder >= 500 ? base + 1000 : base;
-  }
-
-  /** Brutto - mijoz bilan kelishilgan umumiy narx, so'mga o'tkazilgan holda */
-  private getBrutto(cash: Cash): number {
-    if (!cash.brutto) return 0;
-    const amount = Number(cash.brutto.amount ?? 0);
-    const rate = Number(cash.brutto.currency_amount ?? 0);
-    return this.toUZS(amount, cash.brutto.currency, rate);
-  }
-
-  /** Netto - CashServices (xizmatlar) yig'indisi, so'mda. Xizmatlar har doim USD. */
-  private getNetto(cash: Cash): number {
-    if (!cash.cashServices?.length) return 0;
-    const raw = cash.cashServices.reduce((sum, cs) => {
-      const amount = Number(cs.service_amount ?? 0);
-      const rate = Number(cs.currency_amount ?? 0);
-      return sum + amount * rate;
-    }, 0);
-    return this.roundToNearestThousand(raw);
-  }
-
-  /** Mijozdan haqiqatda olingan pul, so'mga o'tkazilgan holda */
-  private getPaidAmount(cash: Cash): number {
-    if (!cash.moneys?.length) return 0;
-    return cash.moneys.reduce((sum, m) => {
-      const amount = Number(m.money_received ?? 0);
-      const rate = Number(m.currency_amount ?? 0);
-      return sum + this.toUZS(amount, m.currency, rate);
-    }, 0);
-  }
-
-  /** Qarz = Brutto - to'langan summa (ikkalasi ham so'mda) */
-  private getDebt(cash: Cash): number {
-    return this.roundToNearestThousand(
-      this.getBrutto(cash) - this.getPaidAmount(cash),
-    );
-  }
-
-  /** Foyda = Brutto - Netto (ikkalasi ham so'mda) */
-  private getProfit(cash: Cash): number {
-    return this.roundToNearestThousand(
-      this.getBrutto(cash) - this.getNetto(cash),
-    );
-  }
-
-  // ---- Notification yordamchi funksiyalari ----
-
-  /** Bitta userga sms + notification yuboradi (xato bo'lsa yiqilmaydi) */
-  private async notifyUser(userId: number, sms: string) {
-    const targetUser = await this.userRepository.findOne({
-      where: { id: userId },
-    });
-    if (!targetUser) return;
-
-    try {
-      await this.botService.sendMessage(targetUser.telegram_id, sms);
-    } catch (e) {
-      // bot yuborolmasa ham notification bazada qoladi
-      console.error(`SMS yuborilmadi (user ${userId}):`, e);
-    }
-
-    await this.notificationRepository.save(
-      this.notificationRepository.create({
-        sms,
-        type: 'cash',
-        user: { id: userId },
-      }),
-    );
-  }
-
-  /** Barcha ADMIN'larga sms + notification yuboradi */
-  private async notifyAdmins(sms: string) {
-    const admins = await this.userRepository.find({
-      where: { type: 'ADMIN' },
-    });
-
-    for (const admin of admins) {
-      await this.notifyUser(admin.id, sms);
-    }
-  }
+    private readonly cashNotificationService: CashNotificationService,
+  ) {}
 
   async getDashboard(user: UserReq, dto: DashboardFilterDto) {
     const where: any = {
@@ -230,14 +122,8 @@ export class CashService {
       relations: CASH_RELATIONS,
     });
 
-    const totalBrutto = cashes.reduce(
-      (sum, cash) => sum + this.getBrutto(cash),
-      0,
-    );
-    const totalNetto = cashes.reduce(
-      (sum, cash) => sum + this.getNetto(cash),
-      0,
-    );
+    const totalBrutto = cashes.reduce((sum, cash) => sum + getBrutto(cash), 0);
+    const totalNetto = cashes.reduce((sum, cash) => sum + getNetto(cash), 0);
 
     return {
       openedCashes: cashes.filter(
@@ -252,8 +138,8 @@ export class CashService {
       totalBrutto,
       totalNetto,
       totalProfit: totalBrutto - totalNetto,
-      debtorCashes: cashes.filter((cash) => this.getDebt(cash) > 0.01).length,
-      debtorSum: cashes.reduce((sum, cash) => sum + this.getDebt(cash), 0),
+      debtorCashes: cashes.filter((cash) => getDebt(cash) > 0.01).length,
+      debtorSum: cashes.reduce((sum, cash) => sum + getDebt(cash), 0),
       cancelledCashes: cashes.filter((cash) => cash.status === 'cancelled')
         .length,
       closedCashes: cashes.filter((cash) => cash.status === 'closed').length,
@@ -261,44 +147,33 @@ export class CashService {
   }
 
   async getCashes(user: UserReq, dto: CashesFilterDto) {
-    if (dto.status == 'due') {
-      const cashes = await this.cashRepository.find({
-        where: {
-          user: { id: user.id },
-        },
-        relations: CASH_RELATIONS,
-      });
+    const { page, limit, startDate, endDate, userId } = dto;
+    const search = dto.cashNumber?.trim();
+    const isDueFilter = dto.status === 'due';
 
-      return cashes
-        .filter((cash) => this.getDebt(cash) > 0.01)
-        .map((cash) => ({
-          id: cash.id,
-          cashNumber: cash.cash_number,
-          createdAt: cash.created_at,
-          destination: cash.destination,
-          status: cash.status,
-          passengerCount: cash.turist_count,
-          totalAmount: cash.netto,
-          totalAmountCurrency: 'UZS',
-          debt: this.getDebt(cash).toFixed(2),
-          firstName: cash.user.first_name,
-          lastName: cash.user.last_name,
-        }));
-    } else {
-      const search = dto.cashNumber?.trim();
+    const dateRange =
+      startDate && endDate
+        ? Between(new Date(startDate), new Date(endDate))
+        : undefined;
 
-      const baseWhere = {
-        ...(user.role !== 'ADMIN' && {
-          user: { id: user.id },
-        }),
-        ...(dto.status &&
-          dto.status !== 'ALL' && {
+    const baseWhere = {
+      ...(user.role !== 'ADMIN'
+        ? { user: { id: user.id } }
+        : userId
+          ? { user: { id: Number(userId) } }
+          : {}),
+      // 'due' haqiqiy DB statusi emas — hisoblanadigan holat, shuning uchun
+      // uni status filtriga qo'shmaymiz
+      ...(dto.status &&
+        dto.status !== 'ALL' &&
+        !isDueFilter && {
           status: dto.status,
         }),
-      };
+      ...(dateRange && { created_at: dateRange }),
+    };
 
-      const where = search
-        ? [
+    const where = search
+      ? [
           {
             ...baseWhere,
             cash_number: ILike(`${search}%`),
@@ -306,32 +181,61 @@ export class CashService {
           {
             ...baseWhere,
             cashServices: {
-              code: ILike(`${search}%`),
+              code: ILike(`%${search}%`),
             },
           },
         ]
-        : baseWhere;
+      : baseWhere;
 
-      const cashes = await this.cashRepository.find({
+    const mapCash = (cash: Cash) => ({
+      id: cash.id,
+      cashNumber: cash.cash_number,
+      createdAt: cash.created_at,
+      destination: cash.destination,
+      status: cash.status,
+      passengerCount: cash.turist_count,
+      totalAmount: cash.netto,
+      totalAmountCurrency: 'UZS',
+      brutto: cash.brutto,
+      debt: getDebt(cash).toFixed(2),
+      firstName: cash.user.first_name,
+      lastName: cash.user.last_name,
+      passangerNames: cash.passengers?.[0]?.first_name,
+      passangerLastNames: cash.passengers?.[0]?.last_name,
+    });
+
+    if (isDueFilter) {
+      // DIQQAT: `debt > 0.01` filtri DB darajasida emas, JS tomonida
+      // qo'llanadi. Shuning uchun page/take dan keyin natijalar soni
+      // `total`dan kam bo'lishi mumkin va sahifalash noaniq bo'ladi.
+      const [cashes, total] = await this.cashRepository.findAndCount({
         where,
         relations: CASH_RELATIONS,
+        order: { created_at: 'DESC' },
+        skip: (page - 1) * limit,
+        take: limit,
       });
 
-      return cashes.map((cash) => ({
-        id: cash.id,
-        cashNumber: cash.cash_number,
-        createdAt: cash.created_at,
-        destination: cash.destination,
-        status: cash.status,
-        passengerCount: cash.turist_count,
-        totalAmount: cash.netto,
-        totalAmountCurrency: 'UZS',
-        brutto: cash.brutto,
-        debt: this.getDebt(cash).toFixed(2),
-        firstName: cash.user.first_name,
-        lastName: cash.user.last_name,
-      }));
+      const filtered = cashes.filter((cash) => getDebt(cash) > 0.01);
+
+      return {
+        data: filtered.map(mapCash),
+        total,
+      };
     }
+
+    const [cashes, total] = await this.cashRepository.findAndCount({
+      where,
+      relations: CASH_RELATIONS,
+      order: { created_at: 'DESC' },
+      skip: (page - 1) * limit,
+      take: limit,
+    });
+
+    return {
+      data: cashes.map(mapCash),
+      total,
+    };
   }
 
   async createCash(user: UserReq, body: CreateCashDto) {
@@ -366,7 +270,7 @@ export class CashService {
         currency === 'UZS' ? 1 : rate;
 
       // Netto - har bir xizmat o'z valyutasidan so'mga o'tkaziladi
-      const netto = this.roundToNearestThousand(
+      const netto = roundToNearestThousand(
         body.services.reduce(
           (sum, s) =>
             sum + s.service_amount * rateOf(s.currency, s.currency_amount),
@@ -441,8 +345,8 @@ export class CashService {
 
     // Yangi kassa to'g'ridan-to'g'ri tasdiqlashga yuborilgan bo'lsa - adminlarga xabar.
     // Transaction TASHQARISIDA - telegram sekin ishlasa ham transaction ochiq qolmaydi.
-    if (body.status === 'pending_approval') {
-      await this.notifyAdmins(
+    if (body.status === CashStatus.PENDING_APPROVAL) {
+      await this.cashNotificationService.notifyAdmins(
         `Yangi kassa №${body.cash_number} yaratildi va tasdiqlashga yuborildi`,
       );
     }
@@ -498,12 +402,12 @@ export class CashService {
     const paidAmount = updatedMoneys.reduce((sum, m) => {
       const amount = Number(m.money_received ?? 0);
       const rate = Number(m.currency_amount ?? 0);
-      return sum + this.toUZS(amount, m.currency, rate);
+      return sum + toUZS(amount, m.currency, rate);
     }, 0);
 
     const bruttoAmount = Number(cash.brutto?.amount ?? 0);
     const bruttoRate = Number(cash.brutto?.currency_amount ?? 0);
-    const brutto = this.toUZS(bruttoAmount, cash.brutto?.currency, bruttoRate);
+    const brutto = toUZS(bruttoAmount, cash.brutto?.currency, bruttoRate);
 
     return {
       paidAmount: paidAmount.toFixed(2),
@@ -836,7 +740,7 @@ export class CashService {
       const newTuristCount = finalPassengers.length;
 
       // Netto - xizmatlar har doim USD deb hisoblanadi
-      const newNetto = this.roundToNearestThousand(
+      const newNetto = roundToNearestThousand(
         finalCashServices.reduce((sum, cs) => {
           const rate = cs.currency === 'UZS' ? 1 : Number(cs.currency_amount);
           return sum + Number(cs.service_amount) * rate;
@@ -906,10 +810,10 @@ export class CashService {
     // oldStatus tekshiruvi muhim: pending kassani shunchaki edit qilsa qayta sms ketmaydi.
     // Transaction TASHQARISIDA yuboriladi.
     if (
-      body.status === 'pending_approval' &&
-      result.oldStatus !== 'pending_approval'
+      body.status === CashStatus.PENDING_APPROVAL &&
+      result.oldStatus !== CashStatus.PENDING_APPROVAL
     ) {
-      await this.notifyAdmins(
+      await this.cashNotificationService.notifyAdmins(
         `Kassa №${result.updated?.cash_number} tasdiqlashga yuborildi`,
       );
     }
@@ -931,7 +835,7 @@ export class CashService {
     if (!body.telegramId) {
       return this.userRepository.update(
         { id },
-        { status: body.status == 'INACTIVE' ? false : true },
+        { status: body.status == UserStatus.INACTIVE ? false : true },
       );
     } else if (user.role == 'ADMIN') {
       return this.userRepository.update(
@@ -940,7 +844,7 @@ export class CashService {
           first_name: body.firstName,
           last_name: body.lastName,
           type: body.role,
-          status: body.status == 'INACTIVE' ? false : true,
+          status: body.status == UserStatus.INACTIVE ? false : true,
           phone_number: body.phoneNumber,
           telegram_id: Number(body.telegramId),
         },
@@ -1043,8 +947,10 @@ export class CashService {
     }
 
     await this.cashRepository.update({ id }, { status: body.status });
-    await this.notifyStatusChange(cash, body.status, user);
-
+    await this.notifyStatusChange(cash, body.status, user, body.comment);
+    if (body.comment) {
+      await this.botService.sendMessage(cash.user.telegram_id, body.comment);
+    }
     await this.historyRepository.save({
       name: 'cash',
       old_column: cash.status,
@@ -1060,6 +966,7 @@ export class CashService {
     cash: Cash,
     next: CashStatus,
     actor: UserReq,
+    comment?: string,
   ) {
     const messages: Partial<Record<CashStatus, string>> = {
       pending_approval: `Xodim kassa №${cash.cash_number}ni tasdiqlashga yubordi`,
@@ -1069,28 +976,28 @@ export class CashService {
       cancelled: `Kassa №${cash.cash_number} bekor qilindi`,
     };
 
-    const sms = messages[next];
+    let sms = messages[next];
     if (!sms) return;
+
+    if (comment?.trim()) {
+      sms += `\nSabab: ${comment.trim()}`;
+    }
 
     const adminIds = (
       await this.userRepository.find({ where: { type: 'ADMIN' } })
     ).map((a) => a.id);
 
     let recipients: number[];
-    if (next === 'closed' || next === 'cancelled') {
-      // Yopilganda/bekor qilinganda - adminlarga HAM, kassa egasiga HAM boradi.
-      // Set - kassa egasi o'zi admin bo'lsa ikki marta sms ketmasligi uchun.
+    if (next === CashStatus.CLOSED || next === CashStatus.CANCELLED) {
       recipients = [...new Set([...adminIds, cash.user.id])];
     } else if (actor.role === 'ADMIN') {
-      // Admin harakat qilgan bo'lsa (approved, sent_for_rework) - kassa egasiga
       recipients = [cash.user.id];
     } else {
-      // Xodim harakat qilgan bo'lsa (pending_approval) - adminlarga
       recipients = adminIds;
     }
 
     for (const userId of recipients) {
-      await this.notifyUser(userId, sms);
+      await this.cashNotificationService.notifyUser(userId, sms);
     }
   }
 
@@ -1102,7 +1009,7 @@ export class CashService {
       first_name: body.firstName,
       last_name: body.lastName,
       type: body.role,
-      status: body.isActive == 'INACTIVE' ? false : true,
+      status: body.isActive == UserStatus.INACTIVE ? false : true,
       phone_number: body.phoneNumber,
       telegram_id: Number(body.telegramId),
     });
@@ -1111,10 +1018,32 @@ export class CashService {
   //--------------------------------ServiceType / Service (katalog)-----------------------------------//
 
   getCompanyTypeById(user: UserReq, id: number) {
-    return this.serviceTypeRepository.findOne({
-      where: { id, services: { is_active: true } },
-      relations: { services: true },
-    });
+    return this.serviceRepository
+      .createQueryBuilder('service')
+      .leftJoin('service.serviceType', 'serviceType')
+      .leftJoin('service.cashServices', 'cashService')
+      .where('serviceType.id = :id', { id }) // <-- id = ServiceType id, TO'G'RI shu bo'lishi kerak
+      .andWhere('service.is_active = true')
+      .select('service.id', 'id')
+      .addSelect('service.name', 'name')
+      .addSelect('service.company_name', 'company_name')
+      .addSelect(
+        `COALESCE(
+          SUM(
+            CASE
+              WHEN "cashService"."currency" = 'UZS'
+                THEN "cashService"."service_amount"
+              ELSE "cashService"."service_amount" * "cashService"."currency_amount"
+            END
+          ),
+          0
+        )`,
+        'totalPrice',
+      )
+      .groupBy('service.id')
+      .addGroupBy('service.name')
+      .addGroupBy('service.company_name')
+      .getRawMany();
   }
 
   getCompanyType() {
@@ -1134,7 +1063,10 @@ export class CashService {
     if (user.role !== 'ADMIN') {
       throw new ForbiddenException();
     }
-    return this.serviceTypeRepository.save({ name: body.name });
+    return this.serviceTypeRepository.save({
+      name: body.name,
+      color: body.color,
+    });
   }
 
   createServiceCompany(user: UserReq, body: CreateServiceCompanyDto) {
@@ -1149,9 +1081,6 @@ export class CashService {
     });
   }
 
-  // YANGI: grafik uchun oy/kun bo'yicha guruhlangan haqiqiy ma'lumot.
-  // Avval bu butunlay frontend mock'da edi (revenue*0.18 = profit, hardcoded margin).
-  // Endi haqiqiy Brutto/Netto asosida, backenddagi bir xil moliyaviy mantiq bilan.
   async getChartData(user: UserReq, dto: DashboardFilterDto) {
     const where: any = {
       created_at: Between(new Date(dto.startDate), new Date(dto.endDate)),
@@ -1182,8 +1111,8 @@ export class CashService {
 
       // Brutto va Netto - ikkalasi ham so'mga o'tkazilgan holda (getBrutto/getNetto
       // bilan bir xil mantiq)
-      const revenue = this.getBrutto(cash);
-      const profit = this.getProfit(cash); // Brutto - Netto
+      const revenue = getBrutto(cash);
+      const profit = getProfit(cash); // Brutto - Netto
 
       const m = byMonthMap.get(monthKey) ?? { revenue: 0, profit: 0, count: 0 };
       m.revenue += revenue;
@@ -1242,8 +1171,6 @@ export class CashService {
     return { byMonth, byDay };
   }
 
-  // YANGI: oy o'rniga aniq sana oralig'i (from/to) bo'yicha filtrlanadi.
-  // departure_date kunlar darajasida solishtiriladi.
   async getUserCashes(
     actor: UserReq,
     targetUserId: number,
@@ -1286,10 +1213,10 @@ export class CashService {
     });
 
     const items = cashes.map((cash) => {
-      const brutto = this.getBrutto(cash);
-      const netto = this.getNetto(cash);
-      const profit = this.getProfit(cash);
-      const debt = this.getDebt(cash);
+      const brutto = getBrutto(cash);
+      const netto = getNetto(cash);
+      const profit = getProfit(cash);
+      const debt = getDebt(cash);
 
       // Juma bo'lsa 25%, aks holda 20%
       const day = new Date(cash.created_at).getDay(); // 0=Yakshanba ... 5=Juma
@@ -1377,5 +1304,46 @@ export class CashService {
     });
 
     return { success: true };
+  }
+
+  async checkBaseCash() {
+    const user = await this.userRepository.find({
+      where: { type: 'ADMIN' },
+    });
+
+    const cashes = await this.cashRepository.find({
+      where: {
+        return_date: LessThan(new Date().toString()),
+        status: Not('closed'),
+      },
+    });
+
+    for (const cash of cashes) {
+      await this.cashRepository.update(
+        {
+          id: cash.id,
+        },
+        { status: 'closed' },
+      );
+
+      if (!user) {
+        return;
+      } else {
+        for (const u of user) {
+          await this.cashNotificationService.notifyUser(
+            u.id,
+            `No ${cash.cash_number} kassaning qaytish sanasi o'tib ketdi. Va kassa avtomatik tarzda yopildi.`,
+          );
+        }
+      }
+    }
+  }
+
+  getCashHistory(user: UserReq, id: number) {
+    return this.historyRepository.find({
+      where: { cash: { id } },
+      relations: ['user'],
+      order: { created_at: 'DESC' },
+    });
   }
 }

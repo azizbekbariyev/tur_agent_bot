@@ -87,12 +87,12 @@ export class BotService {
       const token = await this.generateToken(user);
       await ctx.reply(
         `Hurmatli foydalanuvchi, xizmatlardan foydalanish uchun quyidagi tugmani bosing.\n\n${process.env.APP_URL}/?token=${token}`,
-        Markup.inlineKeyboard([
-          Markup.button.webApp(
-            '🚀 Mini Appni ochish',
-            `${process.env.APP_URL}/?token=` + token,
-          ),
-        ]),
+        // Markup.inlineKeyboard([
+        //   Markup.button.webApp(
+        //     '🚀 Mini Appni ochish',
+        //     `${process.env.APP_URL}/?token=` + token,
+        //   ),
+        // ]),
       );
       return;
     } else if (ctx.from!.id == Number(process.env.ADMIN)) {
@@ -101,12 +101,12 @@ export class BotService {
         username: ctx.from!.username,
         first_name: ctx.from!.first_name,
         last_name: ctx.from!.last_name,
-        type: 'EMPLOYEE',
+        type: 'ADMIN',
       });
 
       const token = await this.generateToken({
         telegram_id: ctx.from!.id,
-        type: 'EMPLOYEE',
+        type: 'ADMIN',
         id: newUser.id,
       });
       await ctx.reply(
@@ -126,7 +126,7 @@ export class BotService {
       username: ctx.from!.username,
       first_name: ctx.from!.first_name,
       last_name: ctx.from!.last_name,
-      type: 'ADMIN',
+      type: 'EMPLOYEE',
       status: false,
     });
 

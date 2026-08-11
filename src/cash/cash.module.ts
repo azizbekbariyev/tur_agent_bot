@@ -14,6 +14,7 @@ import { BotModule } from 'src/bot/bot.module';
 import { CashServices } from '../bot/models/cash_services';
 import { ServiceType } from '../bot/models/service_type';
 import { Brutto } from '../bot/models/brutto';
+import { CashNotificationService } from './cash-notification.service';
 
 @Module({
   imports: [
@@ -32,6 +33,6 @@ import { Brutto } from '../bot/models/brutto';
     BotModule,
   ],
   controllers: [CashController],
-  providers: [CashService, JwtService],
+  providers: [CashService, JwtService, CashNotificationService],
 })
 export class CashModule {}

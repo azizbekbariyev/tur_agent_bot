@@ -7,6 +7,7 @@ import { BotModule } from './bot/bot.module';
 import { ConfigModule } from '@nestjs/config';
 import { CashModule } from './cash/cash.module';
 import { AuthModule } from './auth/auth.module';
+import { ScheduleModule } from '@nestjs/schedule';
 
 @Module({
   imports: [
@@ -33,6 +34,7 @@ import { AuthModule } from './auth/auth.module';
       autoLoadEntities: true,
       dropSchema: false,
     }),
+    ScheduleModule.forRoot(),
     BotModule,
     CashModule,
     AuthModule,

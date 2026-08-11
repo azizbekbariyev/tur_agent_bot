@@ -24,6 +24,7 @@ import {
   UpdateCashStatusDto,
   UpdateUserDto,
 } from './dto/cash.dto';
+import { Cron } from '@nestjs/schedule';
 
 // XATOLIK TUZATILDI: @UseGuards(JwtAuthGuard) endi controller darajasida -
 // avval har bir method'ga alohida yozilardi va ikkitasida (`deleteUser`,
@@ -33,12 +34,14 @@ import {
 export class CashController {
   constructor(private readonly cashService: CashService) {}
 
-  //-------------------------------Employee-------------------------------//
+  @Cron('0 6 * * *', {
+    timeZone: 'Asia/Tashkent',
+  })
+  async checkBaseCash() {
+    await this.cashService.checkBaseCash();
+  }
 
-  // XATOLIK TUZATILDI: pastda Admin bo'limida xuddi shunday
-  // @Get('dashboard') bor edi ('/dashboard' va 'dashboard' Nest/Express
-  // uchun bir xil route hisoblanadi) - duplicate route runtime xatoga
-  // yoki noaniq routing'ga olib kelardi. Faqat shu bitta qoldirildi.
+  //-------------------------------Employee-------------------------------//
   @Get('dashboard')
   getDashboard(@Req() req: Request, @Query() query: DashboardFilterDto) {
     return this.cashService.getDashboard(req.user, query);
@@ -49,10 +52,20 @@ export class CashController {
     @Req() req: Request,
     @Query('status') status: string,
     @Query('cashNumber') cashNumber: string,
+    @Query('page') page = '1',
+    @Query('limit') limit = '10',
+    @Query('startDate') startDate: string,
+    @Query('endDate') endDate: string,
+    @Query('userId') userId?: string,
   ) {
     return this.cashService.getCashes(req.user, {
       status,
       cashNumber,
+      page: Number(page),
+      limit: Number(limit),
+      userId,
+      startDate,
+      endDate,
     });
   }
 
@@ -204,5 +217,10 @@ export class CashController {
   @Delete('cash/:id')
   deleteCash(@Req() req: Request, @Param('id') id: number) {
     return this.cashService.deleteCash(req.user, id);
+  }
+
+  @Get('cash-history/:id')
+  getCashHistory(@Req() req: Request, @Param('id') id: number) {
+    return this.cashService.getCashHistory(req.user, id);
   }
 }
