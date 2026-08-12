@@ -107,4 +107,7 @@ export class Cash {
   })
   @JoinColumn({ name: 'brutto_id' })
   brutto!: Brutto;
+
+  @Column({ type: 'boolean', default: false })
+  is_bonus_taken!: boolean;
 }

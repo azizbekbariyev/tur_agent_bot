@@ -8,6 +8,7 @@ import {
   IsArray,
   IsInt,
   IsPositive,
+  IsBoolean,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
@@ -376,6 +377,11 @@ export class UpdateCashStatusDto {
   @IsOptional()
   @IsString()
   comment?: string;
+}
+
+export class UpdateCashEmployeeBonusDto {
+  @IsBoolean()
+  taken!: boolean;
 }
 
 export class CreateUserDto {

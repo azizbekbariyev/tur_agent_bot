@@ -24,6 +24,7 @@ import {
   CreateUserDto,
   DashboardFilterDto,
   UpdateCashDto,
+  UpdateCashEmployeeBonusDto,
   UpdateCashStatusDto,
   UpdateUserDto,
   UserStatus,
@@ -104,7 +105,7 @@ export class CashService {
     @InjectRepository(ServiceType)
     private readonly serviceTypeRepository: Repository<ServiceType>,
     private readonly cashNotificationService: CashNotificationService,
-  ) {}
+  ) { }
 
   async getDashboard(user: UserReq, dto: DashboardFilterDto) {
     const where: any = {
@@ -167,24 +168,24 @@ export class CashService {
       ...(dto.status &&
         dto.status !== 'ALL' &&
         !isDueFilter && {
-          status: dto.status,
-        }),
+        status: dto.status,
+      }),
       ...(dateRange && { created_at: dateRange }),
     };
 
     const where = search
       ? [
-          {
-            ...baseWhere,
-            cash_number: ILike(`${search}%`),
+        {
+          ...baseWhere,
+          cash_number: ILike(`${search}%`),
+        },
+        {
+          ...baseWhere,
+          cashServices: {
+            code: ILike(`%${search}%`),
           },
-          {
-            ...baseWhere,
-            cashServices: {
-              code: ILike(`%${search}%`),
-            },
-          },
-        ]
+        },
+      ]
       : baseWhere;
 
     const mapCash = (cash: Cash) => ({
@@ -1217,11 +1218,9 @@ export class CashService {
       const netto = getNetto(cash);
       const profit = getProfit(cash);
       const debt = getDebt(cash);
-
       // Juma bo'lsa 25%, aks holda 20%
       const day = new Date(cash.created_at).getDay(); // 0=Yakshanba ... 5=Juma
       const bonus = day === 5 ? profit * 0.25 : profit * 0.2;
-
       return {
         id: cash.id,
         cashNumber: cash.cash_number,
@@ -1233,11 +1232,14 @@ export class CashService {
         profit,
         debt,
         bonus,
+        bonusTaken: cash.is_bonus_taken,
       };
     });
 
     const totalProfit = items.reduce((sum, i) => sum + i.profit, 0);
-    const totalBonus = items.reduce((sum, i) => sum + i.bonus, 0);
+    const totalBonus = items
+      .filter((i) => !i.bonusTaken)
+      .reduce((sum, i) => sum + i.bonus, 0);
     const totalBrutto = items.reduce((sum, i) => sum + i.brutto, 0);
     const totalNetto = items.reduce((sum, i) => sum + i.netto, 0);
     const totalDebt = items.reduce((sum, i) => sum + i.debt, 0);
@@ -1345,5 +1347,13 @@ export class CashService {
       relations: ['user'],
       order: { created_at: 'DESC' },
     });
+  }
+
+  updateCashEmployeeBonus(
+    user: UserReq,
+    id: number,
+    body: UpdateCashEmployeeBonusDto,
+  ) {
+    return this.cashRepository.update({ id }, { is_bonus_taken: body.taken });
   }
 }

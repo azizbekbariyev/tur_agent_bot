@@ -21,6 +21,7 @@ import {
   CreateUserDto,
   DashboardFilterDto,
   UpdateCashDto,
+  UpdateCashEmployeeBonusDto,
   UpdateCashStatusDto,
   UpdateUserDto,
 } from './dto/cash.dto';
@@ -222,5 +223,14 @@ export class CashController {
   @Get('cash-history/:id')
   getCashHistory(@Req() req: Request, @Param('id') id: number) {
     return this.cashService.getCashHistory(req.user, id);
+  }
+
+  @Patch('cash/employee/bonus/:id')
+  updateCashEmployeeBonus(
+    @Req() req: Request,
+    @Param('id') id: number,
+    @Body() body: UpdateCashEmployeeBonusDto,
+  ) {
+    return this.cashService.updateCashEmployeeBonus(req.user, id, body);
   }
 }
