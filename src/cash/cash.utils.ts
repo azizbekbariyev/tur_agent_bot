@@ -29,7 +29,7 @@ export function getNetto(cash: Cash): number {
   const raw = cash.cashServices.reduce((sum, cs) => {
     const amount = Number(cs.service_amount ?? 0);
     const rate = Number(cs.currency_amount ?? 0);
-    return sum + amount * toUZS(amount, cs.currency, rate);
+    return sum + amount * rate;
   }, 0);
   return roundToNearestThousand(raw);
 }
