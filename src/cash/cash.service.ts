@@ -168,24 +168,36 @@ export class CashService {
       ...(dto.status &&
         dto.status !== 'ALL' &&
         !isDueFilter && {
-        status: dto.status,
-      }),
+          status: dto.status,
+        }),
       ...(dateRange && { created_at: dateRange }),
     };
 
     const where = search
       ? [
-        {
-          ...baseWhere,
-          cash_number: ILike(`${search}%`),
-        },
-        {
-          ...baseWhere,
-          cashServices: {
-            code: ILike(`%${search}%`),
+          {
+            ...baseWhere,
+            cash_number: ILike(`${search}%`),
           },
-        },
-      ]
+          {
+            ...baseWhere,
+            cashServices: {
+              code: ILike(`%${search}%`),
+            },
+          },
+          {
+            ...baseWhere,
+            passengers: {
+              first_name: ILike(`%${search}%`),
+            },
+          },
+          {
+            ...baseWhere,
+            passengers: {
+              last_name: ILike(`%${search}%`),
+            },
+          },
+        ]
       : baseWhere;
 
     const mapCash = (cash: Cash) => ({
