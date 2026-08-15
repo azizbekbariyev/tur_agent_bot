@@ -12,10 +12,10 @@ export class BotUpdate {
     return this.botService.start(ctx);
   }
 
-  // @Cron('0 0 8 * * *')
-  // dailyCheck() {
-  //   return this.botService.dailyCheck();
-  // }
+  @Cron('0 0 8 * * *')
+  dailyCheck() {
+    return this.botService.dailyCheck();
+  }
 
   @Command('excel')
   getExcel(@Ctx() ctx: Context) {

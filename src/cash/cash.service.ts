@@ -1214,13 +1214,17 @@ export class CashService {
       throw new NotFoundException('Foydalanuvchi topilmadi');
     }
 
-    const where: any = {
-      user: { id: targetUserId },
-      created_at: Between(start, end),
-    };
-
     const cashes = await this.cashRepository.find({
-      where,
+      where: [
+        {
+          user: { id: targetUserId },
+          created_at: Between(start, end),
+        },
+        {
+          additionalUser: { id: targetUserId },
+          created_at: Between(start, end),
+        },
+      ],
       relations: CASH_RELATIONS,
       order: { departure_date: 'ASC' },
     });
@@ -1230,9 +1234,19 @@ export class CashService {
       const netto = getNetto(cash);
       const profit = getProfit(cash);
       const debt = getDebt(cash);
+
       // Juma bo'lsa 25%, aks holda 20%
+      // Agar additionalUser bo'lsa, foiz yarmiga tushadi: 12.5% / 10%
       const day = new Date(cash.created_at).getDay(); // 0=Yakshanba ... 5=Juma
-      const bonus = day === 5 ? profit * 0.25 : profit * 0.2;
+      const hasAdditionalUser = !!cash.additionalUser;
+
+      let bonusPercent: number;
+      if (hasAdditionalUser) {
+        bonusPercent = day === 5 ? 0.125 : 0.1;
+      } else {
+        bonusPercent = day === 5 ? 0.25 : 0.2;
+      }
+      const bonus = profit * bonusPercent;
       return {
         id: cash.id,
         cashNumber: cash.cash_number,
@@ -1327,7 +1341,7 @@ export class CashService {
 
     const cashes = await this.cashRepository.find({
       where: {
-        return_date: LessThan(new Date().toString()),
+        return_date: LessThan(new Date().toISOString()),
         status: Not('closed'),
       },
     });
