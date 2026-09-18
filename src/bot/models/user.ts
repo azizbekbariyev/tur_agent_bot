@@ -1,4 +1,11 @@
-import { Column, Entity, OneToMany, PrimaryGeneratedColumn } from 'typeorm';
+import {
+  Column,
+  Entity,
+  JoinColumn,
+  ManyToOne,
+  OneToMany,
+  PrimaryGeneratedColumn,
+} from 'typeorm';
 import { Cash } from './cash';
 import { History } from './history';
 import { Notification } from './notification';
@@ -8,21 +15,6 @@ export class User {
   @PrimaryGeneratedColumn()
   id!: number;
 
-  @Column({
-    type: 'bigint',
-  })
-  telegram_id!: number;
-
-  @Column({
-    nullable: true,
-  })
-  username?: string;
-
-  @Column({
-    nullable: true,
-  })
-  phone_number?: string;
-
   @Column()
   first_name!: string;
 
@@ -31,10 +23,23 @@ export class User {
   })
   last_name?: string;
 
+  @Column({
+    unique: true,
+  })
+  email!: string;
+
+  @Column()
+  hashed_password!: string;
+
+  @Column({
+    nullable: true,
+  })
+  hashed_refresh_token?: string;
+
   // admin yoki userligi
   @Column({
     type: 'enum',
-    enum: ['ADMIN', 'EMPLOYEE'],
+    enum: ['ADMIN', 'EMPLOYEE', 'SUPERADMIN'],
   })
   type!: string;
 
@@ -67,4 +72,14 @@ export class User {
 
   @OneToMany(() => Notification, (notification) => notification.user)
   notifications!: Notification[];
+
+  @ManyToOne(() => User, (user) => user.children, {
+    nullable: true,
+    onDelete: 'SET NULL',
+  })
+  @JoinColumn({ name: 'parent_id' })
+  parent?: User;
+
+  @OneToMany(() => User, (user) => user.parent)
+  children!: User[];
 }

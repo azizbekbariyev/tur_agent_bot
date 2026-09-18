@@ -105,7 +105,7 @@ export class CashService {
     @InjectRepository(ServiceType)
     private readonly serviceTypeRepository: Repository<ServiceType>,
     private readonly cashNotificationService: CashNotificationService,
-  ) { }
+  ) {}
 
   async getDashboard(user: UserReq, dto: DashboardFilterDto) {
     const where: any = {
@@ -858,8 +858,6 @@ export class CashService {
           last_name: body.lastName,
           type: body.role,
           status: body.status == UserStatus.INACTIVE ? false : true,
-          phone_number: body.phoneNumber,
-          telegram_id: Number(body.telegramId),
         },
       );
     }
@@ -961,9 +959,6 @@ export class CashService {
 
     await this.cashRepository.update({ id }, { status: body.status });
     await this.notifyStatusChange(cash, body.status, user, body.comment);
-    if (body.comment) {
-      await this.botService.sendMessage(cash.user.telegram_id, body.comment);
-    }
     await this.historyRepository.save({
       name: 'cash',
       old_column: cash.status,

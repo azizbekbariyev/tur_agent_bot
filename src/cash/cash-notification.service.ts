@@ -24,14 +24,6 @@ export class CashNotificationService {
     });
 
     if (!targetUser) return;
-
-    try {
-      await this.botService.sendMessage(targetUser.telegram_id, sms);
-    } catch (e) {
-      // Bot yuborolmasa ham notification bazada qoladi
-      console.error(`SMS yuborilmadi (user ${userId}):`, e);
-    }
-
     await this.notificationRepository.save(
       this.notificationRepository.create({
         sms,
