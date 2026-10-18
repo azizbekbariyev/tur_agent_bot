@@ -110,7 +110,7 @@ export class CashService {
 
   async getDashboard(user: UserReq, dto: DashboardFilterDto) {
     const where: any = {
-      is_deleted: false,
+      isDeleted: false,
       created_at: Between(new Date(dto.startDate), new Date(dto.endDate)),
     };
 
