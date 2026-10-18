@@ -92,12 +92,12 @@ export class BotService {
 
       await ctx.reply(
         `Hurmatli foydalanuvchi, xizmatlardan foydalanish uchun quyidagi tugmani bosing.\n\n${process.env.VITE_BACKEND_URL}/?token=${token}`,
-        // Markup.inlineKeyboard([
-        //   Markup.button.webApp(
-        //     '🚀 Mini Appni ochish',
-        //     `${process.env.VITE_BACKEND_URL}/login`,
-        //   ),
-        // ]),
+        Markup.inlineKeyboard([
+          Markup.button.webApp(
+            '🚀 Mini Appni ochish',
+            `${process.env.VITE_BACKEND_URL}/login`,
+          ),
+        ]),
       );
     }
   }
