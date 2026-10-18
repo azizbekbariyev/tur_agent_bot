@@ -15,26 +15,36 @@ export class User {
   @PrimaryGeneratedColumn()
   id!: number;
 
-  @Column()
-  first_name!: string;
+  @Column({ name: 'first_name' })
+  firstName!: string;
 
   @Column({
+    name: 'last_name',
     nullable: true,
   })
-  last_name?: string;
+  lastName?: string;
 
   @Column({
     unique: true,
-  })
-  email!: string;
-
-  @Column()
-  hashed_password!: string;
-
-  @Column({
     nullable: true,
   })
-  hashed_refresh_token?: string;
+  email?: string;
+
+  @Column({ name: 'hashed_password', default: '' })
+  hashedPassword!: string;
+
+  @Column({
+    name: 'hashed_refresh_token',
+    nullable: true,
+  })
+  hashedRefreshToken?: string;
+
+  @Column({
+    name: 'telegram_id',
+    nullable: true,
+    type: 'bigint',
+  })
+  telegramId?: number;
 
   // admin yoki userligi
   @Column({
@@ -45,9 +55,10 @@ export class User {
 
   @Column({
     type: 'timestamp',
+    name: 'created_at',
     default: () => 'CURRENT_TIMESTAMP',
   })
-  created_at!: Date;
+  createdAt!: Date;
 
   @Column({
     type: 'boolean',
@@ -58,8 +69,9 @@ export class User {
   @Column({
     type: 'boolean',
     default: false,
+    name: 'is_deleted',
   })
-  is_deleted!: boolean;
+  isDeleted!: boolean;
 
   @OneToMany(() => Cash, (cash) => cash.user)
   cashes!: Cash[];

@@ -19,20 +19,20 @@ jobs:
           key: ${{ secrets.VPS_SSH_KEY }}
           port: 22
           script: |
-            # ---------- BOT 1 BACKEND ----------
-            cd ~/bot_1/tur_agent_bot
-            git fetch origin
-            git reset --hard origin/main
-            npm install
-            npm run build
-            pm2 restart bot-1-back || pm2 start dist/main.js --name bot-1-back
+            set -e
 
-            # ---------- BOT 2 BACKEND ----------
-            cd ~/bot_2/tur_agent_bot
-            git fetch origin
-            git reset --hard origin/main
-            npm install
+            # BOT 1
+            cd /root/kakos-tur-agent/bot-1/tur_agent_bot
+            git pull origin main
+            npm ci
             npm run build
-            pm2 restart bot-2-back || pm2 start dist/main.js --name bot-2-back
+            PORT=3000 pm2 restart bot-1-back --update-env || PORT=3000 pm2 start dist/main.js --name bot-1-back
+            pm2 save
 
+            # BOT 2
+            cd /root/kakos-tur-agent/bot-2/tur_agent_bot
+            git pull origin main
+            npm ci
+            npm run build
+            PORT=3001 pm2 restart bot-2-back --update-env || PORT=3001 pm2 start dist/main.js --name bot-2-back
             pm2 save

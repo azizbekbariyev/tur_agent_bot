@@ -9,46 +9,46 @@ import { JwtService } from '@nestjs/jwt';
 import { Cash } from './models/cash';
 import { Between } from 'typeorm';
 import { Notification } from './models/notification';
-import ExcelJS from 'exceljs';
-import { InputFile } from 'telegraf/types';
+// import ExcelJS from 'exceljs';
+// import { InputFile } from 'telegraf/types';
 
-const COMPANY_NAME = 'ООО "KAKOS TOUR 2"';
+// const COMPANY_NAME = 'ООО "KAKOS TOUR 2"';
 
-const RU_MONTHS = [
-  'ЯНВАРЬ',
-  'ФЕВРАЛЬ',
-  'МАРТ',
-  'АПРЕЛЬ',
-  'МАЙ',
-  'ИЮНЬ',
-  'ИЮЛЬ',
-  'АВГУСТ',
-  'СЕНТЯБРЬ',
-  'ОКТЯБРЬ',
-  'НОЯБРЬ',
-  'ДЕКАБРЬ',
-];
+// const RU_MONTHS = [
+//   'ЯНВАРЬ',
+//   'ФЕВРАЛЬ',
+//   'МАРТ',
+//   'АПРЕЛЬ',
+//   'МАЙ',
+//   'ИЮНЬ',
+//   'ИЮЛЬ',
+//   'АВГУСТ',
+//   'СЕНТЯБРЬ',
+//   'ОКТЯБРЬ',
+//   'НОЯБРЬ',
+//   'ДЕКАБРЬ',
+// ];
 
-const HEADER_FILL: ExcelJS.Fill = {
-  type: 'pattern',
-  pattern: 'solid',
-  fgColor: { argb: 'FFFFFF00' }, // sariq
-};
+// const HEADER_FILL: ExcelJS.Fill = {
+//   type: 'pattern',
+//   pattern: 'solid',
+//   fgColor: { argb: 'FFFFFF00' }, // sariq
+// };
 
-const THIN_BORDER: Partial<ExcelJS.Borders> = {
-  top: { style: 'thin' },
-  left: { style: 'thin' },
-  bottom: { style: 'thin' },
-  right: { style: 'thin' },
-};
+// const THIN_BORDER: Partial<ExcelJS.Borders> = {
+//   top: { style: 'thin' },
+//   left: { style: 'thin' },
+//   bottom: { style: 'thin' },
+//   right: { style: 'thin' },
+// };
 
-function formatDate(d: string | Date) {
-  const date = new Date(d);
-  const dd = String(date.getDate()).padStart(2, '0');
-  const mm = String(date.getMonth() + 1).padStart(2, '0');
-  const yyyy = date.getFullYear();
-  return `${dd}.${mm}.${yyyy}`;
-}
+// function formatDate(d: string | Date) {
+//   const date = new Date(d);
+//   const dd = String(date.getDate()).padStart(2, '0');
+//   const mm = String(date.getMonth() + 1).padStart(2, '0');
+//   const yyyy = date.getFullYear();
+//   return `${dd}.${mm}.${yyyy}`;
+// }
 
 function formatMoney(n: number) {
   return Math.round(n).toLocaleString('en-US');
@@ -75,21 +75,37 @@ export class BotService {
   ) {}
 
   async start(@Ctx() ctx: Context) {
-    await ctx.reply(
-      `Hurmatli foydalanuvchi, xizmatlardan foydalanish uchun quyidagi tugmani bosing.\n\n${process.env.APP_URL}/login`,
-      Markup.inlineKeyboard([
-        Markup.button.webApp(
-          '🚀 Mini Appni ochish',
-          `${process.env.APP_URL}/login`,
-        ),
-      ]),
-    );
+    const user = await this.userRepository.findOne({
+      where: { telegramId: ctx.from!.id },
+    });
+
+    if (!user || user.telegramId === undefined) {
+      throw new Error('Telegram ID mavjud emas');
+    }
+
+    if (user.status) {
+      const token = await this.generateToken({
+        telegramId: user.telegramId,
+        type: user.type,
+        id: user.id,
+      });
+
+      await ctx.reply(
+        `Hurmatli foydalanuvchi, xizmatlardan foydalanish uchun quyidagi tugmani bosing.\n\n${process.env.VITE_BACKEND_URL}/?token=${token}`,
+        // Markup.inlineKeyboard([
+        //   Markup.button.webApp(
+        //     '🚀 Mini Appni ochish',
+        //     `${process.env.VITE_BACKEND_URL}/login`,
+        //   ),
+        // ]),
+      );
+    }
   }
 
-  async generateToken(user: { telegram_id: number; type: string; id: number }) {
+  async generateToken(user: { telegramId: number; type: string; id: number }) {
     const token = await this.jwtService.signAsync(
       {
-        telegram_id: user.telegram_id,
+        telegramId: user.telegramId,
         role: user.type,
         id: user.id,
       },

@@ -14,6 +14,7 @@ async function start() {
     const allowedOrigins = [
       'https://tur-agent.test-prava.uz',
       'http://localhost:5173',
+      'http://localhost:5174',
       'https://turagent.test-prava.uz',
     ];
 
@@ -54,4 +55,4 @@ async function start() {
     console.log('❌ Server start error:', error);
   }
 }
-start();
+void start();

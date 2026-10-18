@@ -3,16 +3,23 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Cash } from 'src/bot/models/cash';
 import { Service } from 'src/bot/models/service';
 import { CashServices } from 'src/bot/models/cash_services';
-import { DataSource, In, LessThan, Not, Repository } from 'typeorm';
+import {
+  DataSource,
+  In,
+  LessThan,
+  Not,
+  Repository,
+  SelectQueryBuilder,
+} from 'typeorm';
 import { Passenger } from 'src/bot/models/passenger';
 import { Money } from 'src/bot/models/money';
 import { History } from 'src/bot/models/history';
-import { Notification } from 'src/bot/models/notification';
 import { UserReq } from 'src/types/user.type';
 import {
   CashesFilterDto,
@@ -23,6 +30,7 @@ import {
   CreateServiceTypeDto,
   CreateUserDto,
   DashboardFilterDto,
+  OptionalDateRangeDto,
   UpdateCashDto,
   UpdateCashEmployeeBonusDto,
   UpdateCashStatusDto,
@@ -32,7 +40,6 @@ import {
 import { Between } from 'typeorm';
 import { ILike } from 'typeorm';
 import { User } from 'src/bot/models/user';
-import { BotService } from 'src/bot/bot.service';
 import { ServiceType } from '../bot/models/service_type';
 import { Brutto } from '../bot/models/brutto';
 import { CashNotificationService } from './cash-notification.service';
@@ -44,13 +51,14 @@ import {
   getDebt,
   getProfit,
 } from './cash.utils';
+import * as bcrypt from 'bcrypt';
 
 type Role = 'ADMIN' | 'EMPLOYEE';
 
 const TRANSITIONS: Record<CashStatus, Partial<Record<CashStatus, Role[]>>> = {
   draft: {
-    pending_approval: ['EMPLOYEE'],
-    cancelled: ['EMPLOYEE'],
+    pending_approval: ['EMPLOYEE', 'ADMIN'],
+    cancelled: ['EMPLOYEE', 'ADMIN'],
   },
   pending_approval: {
     approved: ['ADMIN'],
@@ -72,7 +80,6 @@ const TRANSITIONS: Record<CashStatus, Partial<Record<CashStatus, Role[]>>> = {
   cancelled: {},
 };
 
-// Cash relations har joyda bir xil ishlatiladi
 const CASH_RELATIONS = {
   cashServices: { service: { serviceType: true } },
   passengers: true,
@@ -89,19 +96,12 @@ export class CashService {
     private readonly cashRepository: Repository<Cash>,
     @InjectRepository(Service)
     private readonly serviceRepository: Repository<Service>,
-    @InjectRepository(CashServices)
-    private readonly cashServicesRepository: Repository<CashServices>,
-    @InjectRepository(Passenger)
-    private readonly passengerRepository: Repository<Passenger>,
     @InjectRepository(Money)
     private readonly moneyRepository: Repository<Money>,
     @InjectRepository(History)
     private readonly historyRepository: Repository<History>,
-    @InjectRepository(Notification)
-    private readonly notificationRepository: Repository<Notification>,
     @InjectRepository(User) private readonly userRepository: Repository<User>,
     private readonly dataSource: DataSource,
-    private readonly botService: BotService,
     @InjectRepository(ServiceType)
     private readonly serviceTypeRepository: Repository<ServiceType>,
     private readonly cashNotificationService: CashNotificationService,
@@ -123,27 +123,59 @@ export class CashService {
       relations: CASH_RELATIONS,
     });
 
-    const totalBrutto = cashes.reduce((sum, cash) => sum + getBrutto(cash), 0);
-    const totalNetto = cashes.reduce((sum, cash) => sum + getNetto(cash), 0);
+    const stats = cashes.reduce(
+      (acc, cash) => {
+        const brutto = getBrutto(cash);
+        const netto = getNetto(cash);
+        const debt = getDebt(cash);
 
-    return {
-      openedCashes: cashes.filter(
-        (cash) =>
+        acc.totalBrutto += brutto;
+        acc.totalNetto += netto;
+        acc.debtorSum += debt;
+        acc.totalPaid += brutto - debt;
+
+        if (
           cash.status === 'draft' ||
           cash.status === 'pending_approval' ||
-          cash.status === 'sent_for_rework',
-      ).length,
-      soldTours: cashes.filter(
-        (cash) => cash.status === 'approved' || cash.status === 'closed',
-      ).length,
-      totalBrutto,
-      totalNetto,
-      totalProfit: totalBrutto - totalNetto,
-      debtorCashes: cashes.filter((cash) => getDebt(cash) > 0.01).length,
-      debtorSum: cashes.reduce((sum, cash) => sum + getDebt(cash), 0),
-      cancelledCashes: cashes.filter((cash) => cash.status === 'cancelled')
-        .length,
-      closedCashes: cashes.filter((cash) => cash.status === 'closed').length,
+          cash.status === 'sent_for_rework'
+        ) {
+          acc.openedCashes++;
+        }
+
+        if (cash.status === 'approved' || cash.status === 'closed') {
+          acc.soldTours++;
+        }
+
+        if (debt > 0.01) {
+          acc.debtorCashes++;
+        }
+
+        if (cash.status === 'cancelled') {
+          acc.cancelledCashes++;
+        }
+
+        if (cash.status === 'closed') {
+          acc.closedCashes++;
+        }
+
+        return acc;
+      },
+      {
+        openedCashes: 0,
+        soldTours: 0,
+        totalBrutto: 0,
+        totalNetto: 0,
+        debtorCashes: 0,
+        debtorSum: 0,
+        cancelledCashes: 0,
+        closedCashes: 0,
+        totalPaid: 0,
+      },
+    );
+
+    return {
+      ...stats,
+      totalProfit: stats.totalBrutto - stats.totalNetto,
     };
   }
 
@@ -163,8 +195,6 @@ export class CashService {
         : userId
           ? { user: { id: Number(userId) } }
           : {}),
-      // 'due' haqiqiy DB statusi emas — hisoblanadigan holat, shuning uchun
-      // uni status filtriga qo'shmaymiz
       ...(dto.status &&
         dto.status !== 'ALL' &&
         !isDueFilter && {
@@ -188,13 +218,13 @@ export class CashService {
           {
             ...baseWhere,
             passengers: {
-              first_name: ILike(`%${search}%`),
+              firstName: ILike(`%${search}%`),
             },
           },
           {
             ...baseWhere,
             passengers: {
-              last_name: ILike(`%${search}%`),
+              lastName: ILike(`%${search}%`),
             },
           },
         ]
@@ -211,29 +241,24 @@ export class CashService {
       totalAmountCurrency: 'UZS',
       brutto: cash.brutto,
       debt: getDebt(cash).toFixed(2),
-      firstName: cash.user.first_name,
-      lastName: cash.user.last_name,
-      passangerNames: cash.passengers?.[0]?.first_name,
-      passangerLastNames: cash.passengers?.[0]?.last_name,
+      firstName: cash.user.firstName,
+      lastName: cash.user.lastName,
+      passangerNames: cash.passengers?.[0]?.firstName,
+      passangerLastNames: cash.passengers?.[0]?.lastName,
+      netto: cash.netto,
     });
 
     if (isDueFilter) {
-      // DIQQAT: `debt > 0.01` filtri DB darajasida emas, JS tomonida
-      // qo'llanadi. Shuning uchun page/take dan keyin natijalar soni
-      // `total`dan kam bo'lishi mumkin va sahifalash noaniq bo'ladi.
-      const [cashes, total] = await this.cashRepository.findAndCount({
+      const all = await this.cashRepository.find({
         where,
         relations: CASH_RELATIONS,
         order: { created_at: 'DESC' },
-        skip: (page - 1) * limit,
-        take: limit,
       });
-
-      const filtered = cashes.filter((cash) => getDebt(cash) > 0.01);
+      const filtered = all.filter((c) => getDebt(c) > 0.01);
 
       return {
-        data: filtered.map(mapCash),
-        total,
+        data: filtered.slice((page - 1) * limit, page * limit).map(mapCash),
+        total: filtered.length,
       };
     }
 
@@ -249,6 +274,39 @@ export class CashService {
       data: cashes.map(mapCash),
       total,
     };
+  }
+
+  async getCashStatusCounts(
+    user: UserReq,
+    dto: Pick<
+      CashesFilterDto,
+      'cashNumber' | 'startDate' | 'endDate' | 'userId'
+    >,
+  ) {
+    const where: any = {
+      created_at: Between(new Date(dto.startDate), new Date(dto.endDate)),
+      ...(user.role !== 'ADMIN'
+        ? { user: { id: user.id } }
+        : dto.userId
+          ? { user: { id: Number(dto.userId) } }
+          : {}),
+      ...(dto.cashNumber?.trim() && {
+        cash_number: ILike(`${dto.cashNumber.trim()}%`),
+      }),
+    };
+
+    // faqat getDebt ga kerakli relationlar
+    const cashes = await this.cashRepository.find({
+      where,
+      relations: { brutto: true, moneys: true },
+    });
+
+    const counts: Record<string, number> = { hammasi: cashes.length, due: 0 };
+    for (const c of cashes) {
+      counts[c.status] = (counts[c.status] ?? 0) + 1;
+      if (getDebt(c) > 0.01) counts.due++;
+    }
+    return counts;
   }
 
   async createCash(user: UserReq, body: CreateCashDto) {
@@ -345,9 +403,9 @@ export class CashService {
       await Promise.all(
         body.passengers.map((p) =>
           passengerRepo.save({
-            first_name: p.first_name,
-            last_name: p.last_name,
-            phone_number: p.phone_number,
+            firstName: p.firstName,
+            lastName: p.lastName,
+            phoneNumber: p.phoneNumber,
             cash: { id: cash.id },
           }),
         ),
@@ -482,7 +540,7 @@ export class CashService {
         for (const p of toDelete) {
           pushHistory(
             `passenger #${p.id} o'chirildi`,
-            `${p.first_name} ${p.last_name} / ${p.phone_number}`,
+            `${p.firstName} ${p.lastName} / ${p.phoneNumber}`,
             '—',
           );
         }
@@ -502,40 +560,40 @@ export class CashService {
             if (before) {
               pushHistory(
                 `passenger #${p.id} first_name`,
-                before.first_name,
+                before.firstName,
                 p.first_name,
               );
               pushHistory(
                 `passenger #${p.id} last_name`,
-                before.last_name,
+                before.lastName,
                 p.last_name,
               );
               pushHistory(
                 `passenger #${p.id} phone_number`,
-                before.phone_number,
+                before.phoneNumber,
                 p.phone_number,
               );
             }
             await passengerRepo.update(
               { id: p.id, cash: { id } },
               {
-                first_name: p.first_name,
-                last_name: p.last_name,
-                phone_number: p.phone_number,
+                firstName: p.first_name,
+                lastName: p.last_name,
+                phoneNumber: p.phone_number,
               },
             );
           } else {
             const created = passengerRepo.create({
-              first_name: p.first_name,
-              last_name: p.last_name,
-              phone_number: p.phone_number,
+              firstName: p.first_name,
+              lastName: p.last_name,
+              phoneNumber: p.phone_number,
               cash,
             });
             const saved = await passengerRepo.save(created);
             pushHistory(
               `passenger #${saved.id} qo'shildi`,
               '—',
-              `${saved.first_name} ${saved.last_name} / ${saved.phone_number}`,
+              `${saved.firstName} ${saved.lastName} / ${saved.phoneNumber}`,
             );
           }
         }
@@ -845,18 +903,21 @@ export class CashService {
   }
 
   updateUser(user: UserReq, id: number, body: UpdateUserDto) {
-    if (!body.telegramId) {
-      return this.userRepository.update(
-        { id },
-        { status: body.status == UserStatus.INACTIVE ? false : true },
-      );
-    } else if (user.role == 'ADMIN') {
+    if (body.telegramId) {
       return this.userRepository.update(
         { id },
         {
-          first_name: body.firstName,
-          last_name: body.lastName,
-          type: body.role,
+          status: body.status == UserStatus.INACTIVE ? false : true,
+          telegramId: body.telegramId,
+        },
+      );
+    } else {
+      return this.userRepository.update(
+        { id },
+        {
+          firstName: body.firstName,
+          lastName: body.lastName,
+          type: body.type,
           status: body.status == UserStatus.INACTIVE ? false : true,
         },
       );
@@ -865,7 +926,7 @@ export class CashService {
 
   deleteUser(user: UserReq, id: number) {
     if (user.role == 'ADMIN') {
-      return this.userRepository.update({ id }, { is_deleted: true });
+      return this.userRepository.update({ id }, { isDeleted: true });
     }
   }
 
@@ -929,7 +990,10 @@ export class CashService {
     const [items, total] = await qb.getManyAndCount();
 
     return {
-      items,
+      items: items.map((item) => ({
+        ...item,
+        cashNumber: item.cash?.cash_number,
+      })),
       total,
       page: safePage,
       limit: safeLimit,
@@ -1009,48 +1073,77 @@ export class CashService {
     }
   }
 
-  createUser(user: UserReq, body: CreateUserDto) {
+  async createUser(user: UserReq, body: CreateUserDto) {
+    const hashedPassword = await bcrypt.hash(body.password, 10);
     if (user.role !== 'ADMIN') {
       throw new ForbiddenException();
     }
+    const telegramId = body.telegramId?.trim()
+      ? Number(body.telegramId.trim())
+      : undefined;
+
+    if (telegramId !== undefined && !Number.isSafeInteger(telegramId)) {
+      throw new BadRequestException("telegram_id noto'g'ri");
+    }
     return this.userRepository.save({
-      first_name: body.firstName,
-      last_name: body.lastName,
-      type: body.role,
-      status: body.isActive == UserStatus.INACTIVE ? false : true,
-      phone_number: body.phoneNumber,
-      telegram_id: Number(body.telegramId),
+      firstName: body.firstName,
+      lastName: body.lastName,
+      hashedPassword,
+      email: body.email,
+      type: body.type,
+      status: body.status == UserStatus.INACTIVE ? false : true,
+      telegramId: telegramId,
     });
   }
 
   //--------------------------------ServiceType / Service (katalog)-----------------------------------//
 
-  getCompanyTypeById(user: UserReq, id: number) {
+  getCompanyTypeById(user: UserReq, id: number, range: OptionalDateRangeDto) {
+    const cashConditions: string[] = [];
+    const cashParams: Record<string, string> = {};
+
+    if (range.startDate) {
+      cashConditions.push('cash.created_at >= :startDate');
+      cashParams.startDate = range.startDate;
+    }
+    if (range.endDate) {
+      cashConditions.push('cash.created_at <= :endDate');
+      cashParams.endDate = range.endDate;
+    }
+
     return this.serviceRepository
       .createQueryBuilder('service')
       .leftJoin('service.serviceType', 'serviceType')
       .leftJoin('service.cashServices', 'cashService')
-      .where('serviceType.id = :id', { id }) // <-- id = ServiceType id, TO'G'RI shu bo'lishi kerak
+      .leftJoin(
+        'cashService.cash',
+        'cash',
+        cashConditions.length ? cashConditions.join(' AND ') : undefined,
+        cashParams,
+      )
+      .where('serviceType.id = :id', { id }) // id = ServiceType id
       .andWhere('service.is_active = true')
       .select('service.id', 'id')
       .addSelect('service.name', 'name')
       .addSelect('service.company_name', 'company_name')
       .addSelect(
         `COALESCE(
-          SUM(
-            CASE
-              WHEN "cashService"."currency" = 'UZS'
-                THEN "cashService"."service_amount"
-              ELSE "cashService"."service_amount" * "cashService"."currency_amount"
-            END
-          ),
-          0
-        )`,
+        SUM(
+          CASE
+            WHEN "cash"."id" IS NULL THEN 0
+            WHEN "cashService"."currency" = 'UZS'
+              THEN "cashService"."service_amount"
+            ELSE "cashService"."service_amount" * "cashService"."currency_amount"
+          END
+        ),
+        0
+      )`,
         'totalPrice',
       )
       .groupBy('service.id')
       .addGroupBy('service.name')
       .addGroupBy('service.company_name')
+      .orderBy('service.company_name', 'ASC')
       .getRawMany();
   }
 
@@ -1254,8 +1347,8 @@ export class CashService {
     return {
       user: {
         id: targetUser.id,
-        firstName: targetUser.first_name,
-        lastName: targetUser.last_name,
+        firstName: targetUser.firstName,
+        lastName: targetUser.lastName,
       },
       items,
       totalProfit,
@@ -1362,5 +1455,193 @@ export class CashService {
     body: UpdateCashEmployeeBonusDto,
   ) {
     return this.cashRepository.update({ id }, { is_bonus_taken: body.taken });
+  }
+
+  getLastCashes(user: UserReq) {
+    return this.cashRepository.find({
+      where: {
+        user: {
+          id: user.id,
+        },
+      },
+      order: {
+        created_at: 'DESC',
+      },
+      take: 5,
+    });
+  }
+
+  async changePassword(user: UserReq, newPassword: string) {
+    const userId = user.id;
+    if (!userId) {
+      throw new UnauthorizedException('Foydalanuvchi topilmadi');
+    }
+
+    return bcrypt.hash(newPassword, 10).then((hashedPassword) => {
+      return this.userRepository.update({ id: userId }, { hashedPassword });
+    });
+  }
+
+  private readonly ADMIN_ROLES = ['ADMIN', 'SUPERADMIN'];
+
+  private isAdmin(user: UserReq) {
+    return this.ADMIN_ROLES.includes(user.role);
+  }
+
+  // Admin hammasini ko'radi, hodim faqat o'zi ochgan yoki qo'shimcha hodim bo'lgan kassalarni
+  private applyScope<T extends SelectQueryBuilder<any>>(
+    qb: T,
+    user: UserReq,
+    alias = 'c',
+  ): T {
+    if (!this.isAdmin(user)) {
+      qb.andWhere(
+        `(${alias}.user_id = :scopeUserId OR ${alias}.additional_user = :scopeUserId)`,
+        { scopeUserId: user.id },
+      );
+    }
+    return qb;
+  }
+
+  // ---- Dashboard SQL bo'laklari (hammasi so'mda) ----
+  private readonly BRUTTO_UZS_SQL = `COALESCE(CASE WHEN b.currency = 'UZS' THEN b.amount ELSE b.amount * b.currency_amount END, 0)`;
+
+  // Yalpi foyda = brutto (so'mda) - netto (netto allaqachon so'mda saqlanadi)
+  private readonly PROFIT_SQL = `(${this.BRUTTO_UZS_SQL} - c.netto)`;
+
+  // Hodim ulushi: juma (DOW = 5) bo'lsa 25%, aks holda 20%
+  private readonly BONUS_SQL = `(CASE WHEN EXTRACT(DOW FROM c.created_at) = 5 THEN 0.25 ELSE 0.2 END * ${this.PROFIT_SQL})`;
+
+  async getDashboardCharts(user: UserReq, startDate: Date, endDate: Date) {
+    const base = () =>
+      this.applyScope(
+        this.cashRepository
+          .createQueryBuilder('c')
+          .leftJoin('c.brutto', 'b')
+          .where('c.is_deleted = false')
+          .andWhere("c.status NOT IN ('draft','cancelled')")
+          .andWhere('c.created_at BETWEEN :startDate AND :endDate', {
+            startDate,
+            endDate,
+          }),
+        user,
+      );
+
+    const dayExpr = "DATE_TRUNC('day', c.created_at)";
+    const n = (v: unknown) => Number(v ?? 0);
+
+    const [dailyRaw, destinationsRaw, employeesRaw] = await Promise.all([
+      // Kunlik dinamika
+      base()
+        .select(`TO_CHAR(${dayExpr}, 'YYYY-MM-DD')`, 'date')
+        .addSelect(`COALESCE(SUM(${this.BRUTTO_UZS_SQL}), 0)`, 'brutto')
+        .addSelect(`COALESCE(SUM(${this.PROFIT_SQL}), 0)`, 'profit')
+        .addSelect('COALESCE(SUM(c.turist_count), 0)', 'tourists')
+        .addSelect('COUNT(c.id)', 'cashCount')
+        .groupBy(dayExpr)
+        .orderBy(dayExpr, 'ASC')
+        .getRawMany(),
+
+      // Top yo'nalishlar
+      base()
+        .select('c.destination', 'name')
+        .addSelect('COALESCE(SUM(c.turist_count), 0)', 'tourists')
+        .addSelect('COUNT(c.id)', 'cashCount')
+        .addSelect(`COALESCE(SUM(${this.BRUTTO_UZS_SQL}), 0)`, 'brutto')
+        .addSelect(`COALESCE(SUM(${this.PROFIT_SQL}), 0)`, 'profit')
+        .groupBy('c.destination')
+        .orderBy('SUM(c.turist_count)', 'DESC')
+        .limit(7)
+        .getRawMany(),
+
+      // Hodimlar reytingi: faqat admin uchun
+      this.isAdmin(user)
+        ? base()
+            .innerJoin('c.user', 'u')
+            .select('u.id', 'id')
+            .addSelect(
+              "CONCAT(u.firstName, ' ', COALESCE(u.lastName, ''))",
+              'name',
+            )
+            .addSelect('COUNT(c.id)', 'cashCount')
+            .addSelect('COALESCE(SUM(c.turist_count), 0)', 'tourists')
+            .addSelect(`COALESCE(SUM(${this.BRUTTO_UZS_SQL}), 0)`, 'brutto')
+            .addSelect(`COALESCE(SUM(${this.PROFIT_SQL}), 0)`, 'profit')
+            .addSelect(`COALESCE(SUM(${this.BONUS_SQL}), 0)`, 'bonus')
+            .groupBy('u.id')
+            .addGroupBy('u.firstName')
+            .addGroupBy('u.lastName')
+            .orderBy(`SUM(${this.PROFIT_SQL})`, 'DESC')
+            .limit(7)
+            .getRawMany()
+        : Promise.resolve([]),
+    ]);
+
+    // ---- Kunlik qatorni bo'sh kunlar bilan to'ldirish ----
+    type DailyRow = {
+      date: string;
+      brutto: number;
+      profit: number;
+      tourists: number;
+      cashCount: number;
+    };
+
+    const dailyRows: DailyRow[] = dailyRaw.map((r) => ({
+      date: r.date,
+      brutto: n(r.brutto),
+      profit: n(r.profit),
+      tourists: n(r.tourists),
+      cashCount: n(r.cashCount),
+    }));
+
+    const dateKey = (d: Date) =>
+      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+    const spanDays =
+      Math.ceil((endDate.getTime() - startDate.getTime()) / 86_400_000) + 1;
+
+    let daily = dailyRows;
+    if (spanDays > 0 && spanDays <= 366) {
+      const byDate = new Map(dailyRows.map((r) => [r.date, r]));
+      const used = new Set<string>();
+      const filled: DailyRow[] = [];
+
+      const cur = new Date(startDate);
+      cur.setHours(0, 0, 0, 0);
+      while (cur <= endDate) {
+        const k = dateKey(cur);
+        const row = byDate.get(k);
+        if (row) used.add(k);
+        filled.push(
+          row ?? { date: k, brutto: 0, profit: 0, tourists: 0, cashCount: 0 },
+        );
+        cur.setDate(cur.getDate() + 1);
+      }
+
+      // Server va DB vaqt zonasi farq qilsa ham ma'lumot yo'qolmasin
+      for (const r of dailyRows) if (!used.has(r.date)) filled.push(r);
+      filled.sort((a, b) => a.date.localeCompare(b.date));
+      daily = filled;
+    }
+
+    return {
+      daily,
+      destinations: destinationsRaw.map((r) => ({
+        name: r.name,
+        tourists: n(r.tourists),
+        cashCount: n(r.cashCount),
+        brutto: n(r.brutto),
+        profit: n(r.profit),
+      })),
+      employees: employeesRaw.map((r) => ({
+        id: n(r.id),
+        name: String(r.name ?? '').trim(),
+        tourists: n(r.tourists),
+        cashCount: n(r.cashCount),
+        brutto: n(r.brutto),
+        profit: n(r.profit),
+        bonus: n(r.bonus),
+      })),
+    };
   }
 }

@@ -6,22 +6,27 @@ export class Passenger {
   @PrimaryGeneratedColumn()
   id!: number;
 
-  @Column()
-  first_name!: string;
-
-  @Column()
-  last_name!: string;
+  @Column({ name: 'first_name' })
+  firstName!: string;
 
   @Column({
+    name: 'last_name',
     nullable: true,
   })
-  phone_number?: string;
+  lastName?: string;
 
   @Column({
+    name: 'phone_number',
+    nullable: true,
+  })
+  phoneNumber?: string;
+
+  @Column({
+    name: 'created_at',
     type: 'timestamp',
     default: () => 'CURRENT_TIMESTAMP',
   })
-  created_at!: Date;
+  createdAt!: Date;
 
   @ManyToOne(() => Cash, (cash) => cash.passengers)
   cash!: Cash;

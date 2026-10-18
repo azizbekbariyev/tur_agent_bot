@@ -13,13 +13,12 @@ export class UserService {
   async createUser() {
     const hashed_password = await bcrypt.hash('admin', 10);
     const user = this.userRepository.create({
-      first_name: 'Admin1',
-      last_name: 'Admin2',
+      firstName: 'Admin1',
+      lastName: 'Admin2',
       email: 'admin@mail.uz',
-      hashed_password,
+      hashedPassword: hashed_password,
       type: 'SUPERADMIN',
     });
     await this.userRepository.save(user);
-    console.log('User yaratildi');
   }
 }

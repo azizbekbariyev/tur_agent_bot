@@ -1,7 +1,7 @@
-import { Body, Controller, Get, Headers, Post, Req, Res } from '@nestjs/common';
+import { Body, Controller, Get, Post, Req, Res } from '@nestjs/common';
+import { type Request, type Response } from 'express';
 import { AuthService } from './auth.service';
 import { LoginDto } from './auth.dto';
-import { type Request, type Response } from 'express';
 
 @Controller('auth')
 export class AuthController {
@@ -12,17 +12,21 @@ export class AuthController {
     return this.authService.validate(req);
   }
 
-  // @Get('refresh')
-  // refresh(@Headers('authorization') authorization: string) {
-  //   return this.authService.refresh(authorization);
-  // }
-
   @Post('login')
   loginEmailPassword(
     @Body() body: LoginDto,
     @Res({ passthrough: true }) res: Response,
   ) {
-    console.log(body);
     return this.authService.loginEmailPassword(body, res);
+  }
+
+  @Post('refresh')
+  refresh(@Req() req: Request, @Res({ passthrough: true }) res: Response) {
+    return this.authService.refreshTokens(req, res);
+  }
+
+  @Post('logout')
+  logout(@Res({ passthrough: true }) res: Response) {
+    return this.authService.logout(res);
   }
 }
