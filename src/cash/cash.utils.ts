@@ -53,3 +53,18 @@ export function getDebt(cash: Cash): number {
 export function getProfit(cash: Cash): number {
   return roundToNearestThousand(getBrutto(cash) - getNetto(cash));
 }
+
+export function getBonus(cash: Cash): number {
+  const day = new Date(cash.created_at).getDay(); // 5 = juma
+  const hasAdditionalUser = !!cash.additionalUser;
+
+  const percent = hasAdditionalUser
+    ? day === 5
+      ? 0.125
+      : 0.1
+    : day === 5
+      ? 0.25
+      : 0.2;
+
+  return getProfit(cash) * percent;
+}

@@ -50,6 +50,7 @@ import {
   getNetto,
   getDebt,
   getProfit,
+  getBonus,
 } from './cash.utils';
 import * as bcrypt from 'bcrypt';
 
@@ -109,6 +110,7 @@ export class CashService {
 
   async getDashboard(user: UserReq, dto: DashboardFilterDto) {
     const where: any = {
+      is_deleted: false,
       created_at: Between(new Date(dto.startDate), new Date(dto.endDate)),
     };
 
@@ -123,16 +125,25 @@ export class CashService {
       relations: CASH_RELATIONS,
     });
 
+    const active = cashes.filter(
+      (c) => c.status !== 'draft' && c.status !== 'cancelled',
+    );
+
     const stats = cashes.reduce(
       (acc, cash) => {
-        const brutto = getBrutto(cash);
-        const netto = getNetto(cash);
-        const debt = getDebt(cash);
+        const isActive = cash.status !== 'draft' && cash.status !== 'cancelled';
+        if (isActive) {
+          const brutto = getBrutto(cash);
+          const netto = getNetto(cash);
+          const debt = getDebt(cash);
 
-        acc.totalBrutto += brutto;
-        acc.totalNetto += netto;
-        acc.debtorSum += debt;
-        acc.totalPaid += brutto - debt;
+          acc.totalBrutto += brutto;
+          acc.totalNetto += netto;
+          acc.debtorSum += debt;
+          acc.totalPaid += brutto - debt;
+
+          if (debt > 0.01) acc.debtorCashes++;
+        }
 
         if (
           cash.status === 'draft' ||
@@ -144,10 +155,6 @@ export class CashService {
 
         if (cash.status === 'approved' || cash.status === 'closed') {
           acc.soldTours++;
-        }
-
-        if (debt > 0.01) {
-          acc.debtorCashes++;
         }
 
         if (cash.status === 'cancelled') {
@@ -172,10 +179,20 @@ export class CashService {
         totalPaid: 0,
       },
     );
+    const grossProfit = stats.totalBrutto - stats.totalNetto;
+    const employeeShare = active.reduce((s, c) => s + getBonus(c), 0);
+    const touristCount = active.reduce(
+      (s, c) => s + Number(c.turist_count ?? 0),
+      0,
+    );
 
     return {
       ...stats,
-      totalProfit: stats.totalBrutto - stats.totalNetto,
+      totalProfit: grossProfit,
+      grossProfit,
+      employeeShare,
+      netProfit: grossProfit - employeeShare,
+      touristCount,
     };
   }
 
@@ -1322,19 +1339,7 @@ export class CashService {
       const netto = getNetto(cash);
       const profit = getProfit(cash);
       const debt = getDebt(cash);
-
-      // Juma bo'lsa 25%, aks holda 20%
-      // Agar additionalUser bo'lsa, foiz yarmiga tushadi: 12.5% / 10%
-      const day = new Date(cash.created_at).getDay(); // 0=Yakshanba ... 5=Juma
-      const hasAdditionalUser = !!cash.additionalUser;
-
-      let bonusPercent: number;
-      if (hasAdditionalUser) {
-        bonusPercent = day === 5 ? 0.125 : 0.1;
-      } else {
-        bonusPercent = day === 5 ? 0.25 : 0.2;
-      }
-      const bonus = profit * bonusPercent;
+      const bonus = getBonus(cash);
       return {
         id: cash.id,
         cashNumber: cash.cash_number,
@@ -1475,7 +1480,7 @@ export class CashService {
     return this.cashRepository.find({
       where: {
         user: {
-          id: user.id,
+          id: user.role === 'ADMIN' ? user.id : user.id,
         },
       },
       order: {
@@ -1524,7 +1529,11 @@ export class CashService {
   private readonly PROFIT_SQL = `(${this.BRUTTO_UZS_SQL} - c.netto)`;
 
   // Hodim ulushi: juma (DOW = 5) bo'lsa 25%, aks holda 20%
-  private readonly BONUS_SQL = `(CASE WHEN EXTRACT(DOW FROM c.created_at) = 5 THEN 0.25 ELSE 0.2 END * ${this.PROFIT_SQL})`;
+  private readonly BONUS_SQL = `(CASE
+    WHEN c.additional_user IS NOT NULL
+      THEN (CASE WHEN EXTRACT(DOW FROM c.created_at) = 5 THEN 0.125 ELSE 0.1 END)
+    ELSE (CASE WHEN EXTRACT(DOW FROM c.created_at) = 5 THEN 0.25 ELSE 0.2 END)
+  END * ${this.PROFIT_SQL})`;
 
   async getDashboardCharts(user: UserReq, startDate: Date, endDate: Date) {
     const base = () =>
