@@ -16,6 +16,10 @@ async function start() {
       'http://localhost:5173',
       'http://localhost:5174',
       'https://turagent.test-prava.uz',
+      'https://kakos-bot-one.travance.uz',
+      'https://kakos-one.travance.uz',
+      'https://kakos-bot-two.travance.uz',
+      'https://kakos-two.travance.uz',
     ];
 
     app.enableCors({
