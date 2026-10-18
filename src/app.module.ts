@@ -8,6 +8,7 @@ import { ConfigModule } from '@nestjs/config';
 import { CashModule } from './cash/cash.module';
 import { AuthModule } from './auth/auth.module';
 import { ScheduleModule } from '@nestjs/schedule';
+import { UserModule } from './user/user.module';
 
 @Module({
   imports: [
@@ -38,6 +39,7 @@ import { ScheduleModule } from '@nestjs/schedule';
     BotModule,
     CashModule,
     AuthModule,
+    UserModule,
   ],
   controllers: [],
   providers: [],

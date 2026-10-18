@@ -1,4 +1,4 @@
-import { Command, Ctx, Start, Update } from 'nestjs-telegraf';
+import { Ctx, Start, Update } from 'nestjs-telegraf';
 import { BotService } from './bot.service';
 import { Context } from 'telegraf';
 import { Cron } from '@nestjs/schedule';
@@ -15,10 +15,5 @@ export class BotUpdate {
   @Cron('0 0 8 * * *')
   dailyCheck() {
     return this.botService.dailyCheck();
-  }
-
-  @Command('excel')
-  getExcel(@Ctx() ctx: Context) {
-    return this.botService.getExcel(ctx);
   }
 }

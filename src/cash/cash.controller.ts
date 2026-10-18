@@ -20,6 +20,7 @@ import {
   CreateServiceTypeDto,
   CreateUserDto,
   DashboardFilterDto,
+  OptionalDateRangeDto,
   UpdateCashDto,
   UpdateCashEmployeeBonusDto,
   UpdateCashStatusDto,
@@ -160,14 +161,34 @@ export class CashController {
     return this.cashService.updateCashStatus(req.user, id, body);
   }
 
+  @Get('/cashes/status-counts')
+  getCashStatusCounts(
+    @Req() req: Request,
+    @Query('cashNumber') cashNumber: string,
+    @Query('startDate') startDate: string,
+    @Query('endDate') endDate: string,
+    @Query('userId') userId?: string,
+  ) {
+    return this.cashService.getCashStatusCounts(req.user, {
+      cashNumber,
+      startDate,
+      endDate,
+      userId,
+    });
+  }
+
   @Post('user')
   createUser(@Req() req: Request, @Body() body: CreateUserDto) {
     return this.cashService.createUser(req.user, body);
   }
 
   @Get('company/type/:id')
-  getCompanyTypeById(@Req() req: Request, @Param('id') id: number) {
-    return this.cashService.getCompanyTypeById(req.user, id);
+  getCompanyTypeById(
+    @Req() req: Request,
+    @Param('id') id: number,
+    @Query() query: OptionalDateRangeDto,
+  ) {
+    return this.cashService.getCompanyTypeById(req.user, id, query);
   }
 
   @Get('company/type')
@@ -193,6 +214,15 @@ export class CashController {
   @Get('dashboard/chart')
   getDashboardChart(@Req() req: Request, @Query() query: DashboardFilterDto) {
     return this.cashService.getChartData(req.user, query);
+  }
+
+  @Get('dashboard-chart')
+  getDashboardChart2(@Req() req: Request, @Query() query: DashboardFilterDto) {
+    return this.cashService.getDashboardCharts(
+      req.user,
+      new Date(query.startDate),
+      new Date(query.endDate),
+    );
   }
 
   @Get('users/:id/cashes')
@@ -232,5 +262,15 @@ export class CashController {
     @Body() body: UpdateCashEmployeeBonusDto,
   ) {
     return this.cashService.updateCashEmployeeBonus(req.user, id, body);
+  }
+
+  @Get('last-cashes')
+  getLastCashes(@Req() req: Request) {
+    return this.cashService.getLastCashes(req.user);
+  }
+
+  @Post('change-password')
+  changePassword(@Req() req: Request, @Body() body: { password: string }) {
+    return this.cashService.changePassword(req.user, body.password);
   }
 }

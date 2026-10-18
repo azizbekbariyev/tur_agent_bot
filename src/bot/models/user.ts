@@ -1,4 +1,11 @@
-import { Column, Entity, OneToMany, PrimaryGeneratedColumn } from 'typeorm';
+import {
+  Column,
+  Entity,
+  JoinColumn,
+  ManyToOne,
+  OneToMany,
+  PrimaryGeneratedColumn,
+} from 'typeorm';
 import { Cash } from './cash';
 import { History } from './history';
 import { Notification } from './notification';
@@ -8,41 +15,50 @@ export class User {
   @PrimaryGeneratedColumn()
   id!: number;
 
+  @Column({ name: 'first_name' })
+  firstName!: string;
+
   @Column({
+    name: 'last_name',
+    nullable: true,
+  })
+  lastName?: string;
+
+  @Column({
+    unique: true,
+    nullable: true,
+  })
+  email?: string;
+
+  @Column({ name: 'hashed_password', default: '' })
+  hashedPassword!: string;
+
+  @Column({
+    name: 'hashed_refresh_token',
+    nullable: true,
+  })
+  hashedRefreshToken?: string;
+
+  @Column({
+    name: 'telegram_id',
+    nullable: true,
     type: 'bigint',
   })
-  telegram_id!: number;
-
-  @Column({
-    nullable: true,
-  })
-  username?: string;
-
-  @Column({
-    nullable: true,
-  })
-  phone_number?: string;
-
-  @Column()
-  first_name!: string;
-
-  @Column({
-    nullable: true,
-  })
-  last_name?: string;
+  telegramId?: number;
 
   // admin yoki userligi
   @Column({
     type: 'enum',
-    enum: ['ADMIN', 'EMPLOYEE'],
+    enum: ['ADMIN', 'EMPLOYEE', 'SUPERADMIN'],
   })
   type!: string;
 
   @Column({
     type: 'timestamp',
+    name: 'created_at',
     default: () => 'CURRENT_TIMESTAMP',
   })
-  created_at!: Date;
+  createdAt!: Date;
 
   @Column({
     type: 'boolean',
@@ -53,8 +69,9 @@ export class User {
   @Column({
     type: 'boolean',
     default: false,
+    name: 'is_deleted',
   })
-  is_deleted!: boolean;
+  isDeleted!: boolean;
 
   @OneToMany(() => Cash, (cash) => cash.user)
   cashes!: Cash[];
@@ -67,4 +84,14 @@ export class User {
 
   @OneToMany(() => Notification, (notification) => notification.user)
   notifications!: Notification[];
+
+  @ManyToOne(() => User, (user) => user.children, {
+    nullable: true,
+    onDelete: 'SET NULL',
+  })
+  @JoinColumn({ name: 'parent_id' })
+  parent?: User;
+
+  @OneToMany(() => User, (user) => user.parent)
+  children!: User[];
 }

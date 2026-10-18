@@ -77,6 +77,13 @@ export class Cash {
   })
   netto!: string;
 
+  @Column({
+    name: 'is_deleted',
+    type: 'boolean',
+    default: false,
+  })
+  isDeleted!: boolean;
+
   // Qo'shimcha xodim
   @ManyToOne(() => User, (user) => user.additionalCashes)
   @JoinColumn({ name: 'additional_user' })

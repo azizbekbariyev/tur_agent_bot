@@ -52,6 +52,16 @@ export class DashboardFilterDto {
   endDate!: string;
 }
 
+export class OptionalDateRangeDto {
+  @IsOptional()
+  @IsDateString()
+  startDate?: string;
+
+  @IsOptional()
+  @IsDateString()
+  endDate?: string;
+}
+
 export class CashesFilterDto {
   @IsOptional()
   @Type(() => String)
@@ -140,14 +150,14 @@ export class MoneyItemDto {
 
 export class PassengerItemDto {
   @IsString()
-  first_name!: string;
+  firstName!: string;
 
   @IsString()
-  last_name!: string;
+  lastName!: string;
 
   @IsOptional()
   @IsString()
-  phone_number?: string;
+  phoneNumber?: string;
 }
 
 export class CreateCashDto {
@@ -391,17 +401,21 @@ export class CreateUserDto {
   @IsString()
   lastName!: string;
 
+  @IsString()
+  email!: string;
+
+  @IsString()
+  password!: string;
+
   @IsEnum(UserRole)
-  role!: UserRole;
+  type!: UserRole;
 
   @IsEnum(UserStatus)
-  isActive!: UserStatus;
+  status!: UserStatus;
 
+  @IsOptional()
   @IsString()
-  phoneNumber!: string;
-
-  @IsString()
-  telegramId!: string;
+  telegramId?: string;
 }
 
 export class UpdateUserDto {
@@ -414,20 +428,15 @@ export class UpdateUserDto {
   lastName?: string;
 
   @IsOptional()
-  @IsString()
-  phoneNumber?: string;
-
-  @IsOptional()
   @IsEnum(UserRole)
-  role?: UserRole;
+  type?: UserRole;
 
   @IsOptional()
   @IsEnum(UserStatus)
   status?: UserStatus;
 
   @IsOptional()
-  @IsString()
-  telegramId?: string;
+  telegramId?: number;
 }
 
 // ---- ServiceType / Service (katalog) ----
