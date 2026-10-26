@@ -6,8 +6,8 @@ import { Cron } from '@nestjs/schedule';
 export class UserController {
   constructor(private readonly userService: UserService) {}
 
-  @Cron('* * * * *')
-  // @Get('create')
+  // @Cron('* * * * *')
+  @Get('create')
   createUser() {
     return this.userService.createUser();
   }
