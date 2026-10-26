@@ -919,26 +919,54 @@ export class CashService {
     return this.userRepository.find();
   }
 
-  updateUser(user: UserReq, id: number, body: UpdateUserDto) {
-    if (body.telegramId) {
-      return this.userRepository.update(
-        { id },
-        {
-          status: body.status == UserStatus.INACTIVE ? false : true,
-          telegramId: body.telegramId,
-        },
-      );
-    } else {
-      return this.userRepository.update(
-        { id },
-        {
-          firstName: body.firstName,
-          lastName: body.lastName,
-          type: body.type,
-          status: body.status == UserStatus.INACTIVE ? false : true,
-        },
-      );
+  async updateUser(user: UserReq, id: number, body: UpdateUserDto) {
+    if (user.role !== 'ADMIN') {
+      throw new ForbiddenException();
     }
+
+    const target = await this.userRepository.findOne({ where: { id } });
+    if (!target) {
+      throw new NotFoundException('Foydalanuvchi topilmadi');
+    }
+
+    const patch: Partial<User> = {};
+
+    if (body.firstName !== undefined) patch.firstName = body.firstName;
+    if (body.lastName !== undefined) patch.lastName = body.lastName;
+    if (body.type !== undefined) patch.type = body.type;
+
+    if (body.status !== undefined) {
+      patch.status = body.status !== UserStatus.INACTIVE;
+    }
+
+    if (body.telegramId !== undefined) {
+      const telegramId = Number(body.telegramId);
+      if (!Number.isSafeInteger(telegramId)) {
+        throw new BadRequestException("telegram_id noto'g'ri");
+      }
+      patch.telegramId = telegramId;
+    }
+
+    if (body.email !== undefined && body.email !== target.email) {
+      const exists = await this.userRepository.findOne({
+        where: { email: body.email, id: Not(id) },
+      });
+      if (exists) {
+        throw new BadRequestException('Bu email band');
+      }
+      patch.email = body.email;
+    }
+
+    if (body.password?.trim()) {
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call
+      patch.hashedPassword = await bcrypt.hash(body.password, 10);
+    }
+
+    if (Object.keys(patch).length === 0) {
+      return { affected: 0 };
+    }
+
+    return this.userRepository.update({ id }, patch);
   }
 
   deleteUser(user: UserReq, id: number) {

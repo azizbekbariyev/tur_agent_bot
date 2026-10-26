@@ -9,6 +9,7 @@ import {
   IsInt,
   IsPositive,
   IsBoolean,
+  IsEmail,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
@@ -418,6 +419,9 @@ export class CreateUserDto {
   telegramId?: string;
 }
 
+import { MinLength } from 'class-validator';
+import { Transform } from 'class-transformer';
+
 export class UpdateUserDto {
   @IsOptional()
   @IsString()
@@ -428,6 +432,15 @@ export class UpdateUserDto {
   lastName?: string;
 
   @IsOptional()
+  @IsEmail()
+  email?: string;
+
+  @IsOptional()
+  @IsString()
+  @MinLength(6)
+  password?: string;
+
+  @IsOptional()
   @IsEnum(UserRole)
   type?: UserRole;
 
@@ -435,10 +448,16 @@ export class UpdateUserDto {
   @IsEnum(UserStatus)
   status?: UserStatus;
 
+  // Frontend "1120254388" (string) yuboradi, shuning uchun songa o'giramiz
   @IsOptional()
+  @Transform(({ value }) =>
+    value === '' || value === null || value === undefined
+      ? undefined
+      : Number(value),
+  )
+  @IsInt()
   telegramId?: number;
 }
-
 // ---- ServiceType / Service (katalog) ----
 export class CreateServiceTypeDto {
   @IsString()
