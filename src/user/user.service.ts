@@ -17,7 +17,7 @@ export class UserService {
       lastName: 'Admin2',
       email: 'admin@mail.uz',
       hashedPassword: hashed_password,
-      type: 'SUPERADMIN',
+      type: 'ADMIN',
     });
     await this.userRepository.save(user);
   }
