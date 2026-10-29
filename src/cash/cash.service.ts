@@ -912,7 +912,9 @@ export class CashService {
   //--------------------------------Admin-----------------------------------//
 
   async getUsers(req: UserReq) {
-    const user = await this.userRepository.findOne({ where: { id: req.id } });
+    const user = await this.userRepository.findOne({
+      where: { id: req.id, isDeleted: false },
+    });
     if (!user) {
       return [];
     }
