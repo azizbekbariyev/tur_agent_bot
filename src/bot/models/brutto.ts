@@ -16,7 +16,16 @@ export class Brutto {
   @Column()
   currency!: string;
 
-  @Column()
+  // 1 USD/EUR = necha so'm. Avval integer edi - BruttoRateNumeric migratsiyasi o'zgartiradi
+  @Column({
+    type: 'numeric',
+    precision: 15,
+    scale: 2,
+    transformer: {
+      to: (value: number) => value,
+      from: (value: string | null) => (value === null ? null : Number(value)),
+    },
+  })
   currency_amount!: number;
 
   @OneToOne(() => Cash, (cash) => cash.brutto)

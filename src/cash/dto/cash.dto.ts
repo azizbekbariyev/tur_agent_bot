@@ -10,8 +10,12 @@ import {
   IsPositive,
   IsBoolean,
   IsEmail,
+  IsIn,
+  Max,
+  Min,
+  MinLength,
 } from 'class-validator';
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 
 export enum CashStatus {
   DRAFT = 'draft',
@@ -36,8 +40,10 @@ export enum PaymentType {
 }
 
 export enum UserRole {
+  SUPERADMIN = 'SUPERADMIN',
   ADMIN = 'ADMIN',
   EMPLOYEE = 'EMPLOYEE',
+  ACCOUNTANT = 'ACCOUNTANT',
 }
 
 export enum UserStatus {
@@ -63,33 +69,76 @@ export class OptionalDateRangeDto {
   endDate?: string;
 }
 
-export class CashesFilterDto {
+export const CASH_SORT_FIELDS = [
+  'created_at',
+  'cash_number',
+  'seq_no',
+  'departure_date',
+] as const;
+export const CASHES_MAX_LIMIT = 500;
+
+/** /cashes va /cashes/status-counts uchun umumiy filtrlar */
+export class CashFilterDto {
+  // Kassa raqami boshidan moslik (ILIKE 'x%')
   @IsOptional()
-  @Type(() => String)
   @IsString()
   cashNumber?: string;
 
+  // Kassa raqami, yo'nalish, yo'lovchi ismi/familiyasi, xizmat kodi (ILIKE '%x%')
   @IsOptional()
-  @Type(() => String)
-  status?: string;
+  @IsString()
+  search?: string;
 
-  @Type(() => Number)
-  @IsInt()
-  page!: number;
-
-  @Type(() => Number)
-  @IsInt()
-  limit!: number;
-
+  // Egasi YOKI qo'shimcha xodim. 'me' - joriy foydalanuvchi
   @IsOptional()
-  @Type(() => String)
+  @IsString()
   userId?: string;
 
-  @IsString()
-  startDate!: string;
+  // created_at bo'yicha, ikkala chegara ham kiradi
+  @IsOptional()
+  @IsDateString()
+  startDate?: string;
 
+  @IsOptional()
+  @IsDateString()
+  endDate?: string;
+}
+
+export class CashListQueryDto extends CashFilterDto {
+  @IsOptional()
   @IsString()
-  endDate!: string;
+  status?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  page?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(CASHES_MAX_LIMIT)
+  limit?: number;
+
+  @IsOptional()
+  @IsIn(CASH_SORT_FIELDS)
+  sort?: (typeof CASH_SORT_FIELDS)[number];
+
+  @IsOptional()
+  @IsIn(['asc', 'desc', 'ASC', 'DESC'])
+  order?: string;
+}
+
+export class CheckNumberQueryDto {
+  @IsString()
+  cashNumber!: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  excludeId?: number;
 }
 
 // ---- Brutto: mijoz to'lashi kerak bo'lgan jami summa ----
@@ -153,8 +202,9 @@ export class PassengerItemDto {
   @IsString()
   firstName!: string;
 
+  @IsOptional()
   @IsString()
-  lastName!: string;
+  lastName?: string;
 
   @IsOptional()
   @IsString()
@@ -162,13 +212,15 @@ export class PassengerItemDto {
 }
 
 export class CreateCashDto {
+  // Dogovor raqami; "0" yoki bo'sh - dogovor hali berilmagan
+  @IsOptional()
   @IsString()
-  cash_number!: string;
+  cash_number?: string;
 
   // YANGI: endi qo'shimcha xodim ham haqiqiy User (FK), erkin matn emas.
   @IsOptional()
   @IsInt()
-  additional_user_id?: number;
+  additional_user_id?: number | null;
 
   @IsString()
   destination!: string;
@@ -234,16 +286,31 @@ export class CreatePaymantDto {
   currency_amount!: number;
 }
 
+// Frontend firstName/lastName/phoneNumber yuboradi; eski snake_case nomlar ham qabul qilinadi
 export class UpdatePassengerDto {
   @IsOptional()
   @IsInt()
   id?: number;
 
+  @IsOptional()
   @IsString()
-  first_name!: string;
+  firstName?: string;
 
+  @IsOptional()
   @IsString()
-  last_name!: string;
+  lastName?: string;
+
+  @IsOptional()
+  @IsString()
+  phoneNumber?: string;
+
+  @IsOptional()
+  @IsString()
+  first_name?: string;
+
+  @IsOptional()
+  @IsString()
+  last_name?: string;
 
   @IsOptional()
   @IsString()
@@ -310,9 +377,10 @@ export class UpdateCashDto {
   @IsString()
   cash_number?: string;
 
+  // null - qo'shimcha xodimni olib tashlash
   @IsOptional()
   @IsInt()
-  additional_user_id?: number;
+  additional_user_id?: number | null;
 
   @IsOptional()
   @IsString()
@@ -395,6 +463,11 @@ export class UpdateCashEmployeeBonusDto {
   taken!: boolean;
 }
 
+const toTelegramId = ({ value }: { value: unknown }) =>
+  value === '' || value === null || value === undefined
+    ? undefined
+    : Number(value);
+
 export class CreateUserDto {
   @IsString()
   firstName!: string;
@@ -402,25 +475,31 @@ export class CreateUserDto {
   @IsString()
   lastName!: string;
 
-  @IsString()
+  @IsEmail()
   email!: string;
 
   @IsString()
+  @MinLength(6)
   password!: string;
 
   @IsEnum(UserRole)
   type!: UserRole;
 
+  @IsOptional()
   @IsEnum(UserStatus)
-  status!: UserStatus;
+  status?: UserStatus;
 
   @IsOptional()
-  @IsString()
-  telegramId?: string;
-}
+  @Transform(toTelegramId)
+  @IsInt()
+  telegramId?: number;
 
-import { MinLength } from 'class-validator';
-import { Transform } from 'class-transformer';
+  // Oylik foyda maqsadi (so'm), null - sozlamalardagi standart qiymat
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  monthlyTarget?: number | null;
+}
 
 export class UpdateUserDto {
   @IsOptional()
@@ -450,14 +529,67 @@ export class UpdateUserDto {
 
   // Frontend "1120254388" (string) yuboradi, shuning uchun songa o'giramiz
   @IsOptional()
-  @Transform(({ value }) =>
-    value === '' || value === null || value === undefined
-      ? undefined
-      : Number(value),
-  )
+  @Transform(toTelegramId)
   @IsInt()
   telegramId?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  monthlyTarget?: number | null;
 }
+
+export class ChangePasswordDto {
+  @IsString()
+  @MinLength(6)
+  password!: string;
+}
+
+export class VoucherSendDto {
+  @IsOptional()
+  @IsIn(['uz', 'ru'])
+  lang?: 'uz' | 'ru';
+
+  @IsOptional()
+  @IsBoolean()
+  showPassengers?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  showPayments?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  showServices?: boolean;
+}
+
+export const EXPORT_TYPES = [
+  'cashes',
+  'employees',
+  'debtors',
+  'partner-payments',
+] as const;
+
+export class ExportQueryDto {
+  @IsIn(EXPORT_TYPES)
+  type!: (typeof EXPORT_TYPES)[number];
+
+  @IsDateString()
+  startDate!: string;
+
+  @IsDateString()
+  endDate!: string;
+
+  @IsOptional()
+  @IsIn(['xlsx', 'csv'])
+  format?: 'xlsx' | 'csv';
+
+  // Sarlavhalar va holat/to'lov turi nomlari tili
+  @IsOptional()
+  @IsIn(['uz', 'ru'])
+  lang?: 'uz' | 'ru';
+}
+
 // ---- ServiceType / Service (katalog) ----
 export class CreateServiceTypeDto {
   @IsString()

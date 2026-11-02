@@ -30,12 +30,13 @@ export class User {
   })
   email?: string;
 
-  @Column({ name: 'hashed_password', default: '' })
+  @Column({ name: 'hashed_password', default: '', select: false })
   hashedPassword!: string;
 
   @Column({
     name: 'hashed_refresh_token',
     nullable: true,
+    select: false,
   })
   hashedRefreshToken?: string;
 
@@ -49,12 +50,12 @@ export class User {
   // admin yoki userligi
   @Column({
     type: 'enum',
-    enum: ['ADMIN', 'EMPLOYEE', 'SUPERADMIN'],
+    enum: ['ADMIN', 'EMPLOYEE', 'SUPERADMIN', 'ACCOUNTANT'],
   })
   type!: string;
 
   @Column({
-    type: 'timestamp',
+    type: 'timestamptz',
     name: 'created_at',
     default: () => 'CURRENT_TIMESTAMP',
   })
@@ -72,6 +73,20 @@ export class User {
     name: 'is_deleted',
   })
   isDeleted!: boolean;
+
+  // Oylik foyda maqsadi (so'm). null bo'lsa settings.monthlyTarget ishlatiladi
+  @Column({
+    name: 'monthly_target',
+    type: 'numeric',
+    precision: 15,
+    scale: 2,
+    nullable: true,
+    transformer: {
+      to: (value?: number | null) => value,
+      from: (value: string | null) => (value === null ? null : Number(value)),
+    },
+  })
+  monthlyTarget!: number | null;
 
   @OneToMany(() => Cash, (cash) => cash.user)
   cashes!: Cash[];

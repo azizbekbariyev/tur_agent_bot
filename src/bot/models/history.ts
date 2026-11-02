@@ -23,7 +23,7 @@ export class History {
   old_column!: string;
 
   @Column({
-    type: 'timestamp',
+    type: 'timestamptz',
     default: () => 'CURRENT_TIMESTAMP',
   })
   created_at!: Date;

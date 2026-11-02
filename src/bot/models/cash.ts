@@ -1,6 +1,8 @@
 import {
   Column,
   Entity,
+  Generated,
+  Index,
   JoinColumn,
   ManyToOne,
   OneToMany,
@@ -13,13 +15,20 @@ import { Passenger } from './passenger';
 import { History } from './history';
 import { Brutto } from './brutto';
 import { CashServices } from './cash_services';
+import { CashStatusHistory } from './cash_status_history';
 
 @Entity()
 export class Cash {
   @PrimaryGeneratedColumn()
   id!: number;
 
-  // Kassani raqami
+  // Ichki tartib raqami (ID 00001). Migratsiya CashSeqNo1761955400000 yaratadi
+  @Index('IDX_cash_seq_no', { unique: true })
+  @Column({ name: 'seq_no', type: 'integer' })
+  @Generated('increment')
+  seq_no!: number;
+
+  // Dogovor raqami (mijozga beriladi). "0" yoki bo'sh - dogovor hali berilmagan
   @Column()
   cash_number!: string;
 
@@ -36,13 +45,13 @@ export class Cash {
   return_date!: string;
 
   @Column({
-    type: 'timestamp',
+    type: 'timestamptz',
     default: () => 'CURRENT_TIMESTAMP',
   })
   created_at!: Date;
 
   @Column({
-    type: 'timestamp',
+    type: 'timestamptz',
     default: () => 'CURRENT_TIMESTAMP',
   })
   updated_at!: Date;
@@ -108,6 +117,9 @@ export class Cash {
 
   @OneToMany(() => History, (history) => history.cash)
   history!: History[];
+
+  @OneToMany(() => CashStatusHistory, (h) => h.cash)
+  statusHistory!: CashStatusHistory[];
 
   @OneToOne(() => Brutto, (brutto) => brutto.cash, {
     cascade: true,

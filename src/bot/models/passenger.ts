@@ -1,5 +1,12 @@
-import { Column, Entity, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
+import {
+  Column,
+  Entity,
+  JoinColumn,
+  ManyToOne,
+  PrimaryGeneratedColumn,
+} from 'typeorm';
 import { Cash } from './cash';
+import { Client } from './client';
 
 @Entity('passenger')
 export class Passenger {
@@ -23,11 +30,19 @@ export class Passenger {
 
   @Column({
     name: 'created_at',
-    type: 'timestamp',
+    type: 'timestamptz',
     default: () => 'CURRENT_TIMESTAMP',
   })
   createdAt!: Date;
 
   @ManyToOne(() => Cash, (cash) => cash.passengers)
   cash!: Cash;
+
+  // Telefon raqami bo'yicha bog'langan mijoz kartasi
+  @ManyToOne(() => Client, (client) => client.passengers, {
+    nullable: true,
+    onDelete: 'SET NULL',
+  })
+  @JoinColumn({ name: 'client_id' })
+  client?: Client | null;
 }

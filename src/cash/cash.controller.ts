@@ -3,17 +3,23 @@ import {
   Get,
   UseGuards,
   Req,
-  Request,
   Body,
   Post,
   Param,
+  ParseIntPipe,
   Patch,
   Delete,
   Query,
 } from '@nestjs/common';
 import { CashService } from './cash.service';
+import { VoucherService } from './voucher.service';
 import { JwtAuthGuard } from 'src/common/guard/jwt-auth.guard';
+import { UserReq } from 'src/types/user.type';
 import {
+  CashFilterDto,
+  CashListQueryDto,
+  ChangePasswordDto,
+  CheckNumberQueryDto,
   CreateCashDto,
   CreatePaymantDto,
   CreateServiceCompanyDto,
@@ -25,61 +31,76 @@ import {
   UpdateCashEmployeeBonusDto,
   UpdateCashStatusDto,
   UpdateUserDto,
+  VoucherSendDto,
 } from './dto/cash.dto';
-import { Cron } from '@nestjs/schedule';
 
-// XATOLIK TUZATILDI: @UseGuards(JwtAuthGuard) endi controller darajasida -
-// avval har bir method'ga alohida yozilardi va ikkitasida (`deleteUser`,
-// `getMe`) unutilib qolgan edi (guardsiz, ya'ni himoyasiz endpoint).
+type AuthReq = { user: UserReq };
+
+// Rol bo'yicha cheklovlar CashService ichida (backendda majburiy)
 @Controller()
 @UseGuards(JwtAuthGuard)
 export class CashController {
-  constructor(private readonly cashService: CashService) {}
+  constructor(
+    private readonly cashService: CashService,
+    private readonly voucherService: VoucherService,
+  ) {}
 
-  @Cron('0 6 * * *', {
-    timeZone: 'Asia/Tashkent',
-  })
-  async checkBaseCash() {
-    await this.cashService.checkBaseCash();
-  }
-
-  //-------------------------------Employee-------------------------------//
+  //------------------------------- Dashboard -------------------------------//
   @Get('dashboard')
-  getDashboard(@Req() req: Request, @Query() query: DashboardFilterDto) {
+  getDashboard(@Req() req: AuthReq, @Query() query: DashboardFilterDto) {
     return this.cashService.getDashboard(req.user, query);
   }
 
-  @Get('/cashes')
-  getCashes(
-    @Req() req: Request,
-    @Query('status') status: string,
-    @Query('cashNumber') cashNumber: string,
-    @Query('page') page = '1',
-    @Query('limit') limit = '10',
-    @Query('startDate') startDate: string,
-    @Query('endDate') endDate: string,
-    @Query('userId') userId?: string,
-  ) {
-    return this.cashService.getCashes(req.user, {
-      status,
-      cashNumber,
-      page: Number(page),
-      limit: Number(limit),
-      userId,
-      startDate,
-      endDate,
-    });
+  @Get('dashboard/chart')
+  getDashboardChart(@Req() req: AuthReq, @Query() query: DashboardFilterDto) {
+    return this.cashService.getChartData(req.user, query);
+  }
+
+  @Get('dashboard-chart')
+  getDashboardChart2(@Req() req: AuthReq, @Query() query: DashboardFilterDto) {
+    return this.cashService.getDashboardCharts(req.user, query);
+  }
+
+  @Get('me/stats')
+  getMeStats(@Req() req: AuthReq, @Query() query: DashboardFilterDto) {
+    return this.cashService.getMeStats(req.user, query);
+  }
+
+  //------------------------------- Kassalar -------------------------------//
+  @Get('cashes')
+  getCashes(@Req() req: AuthReq, @Query() query: CashListQueryDto) {
+    return this.cashService.getCashes(req.user, query);
+  }
+
+  @Get('cashes/status-counts')
+  getCashStatusCounts(@Req() req: AuthReq, @Query() query: CashFilterDto) {
+    return this.cashService.getCashStatusCounts(req.user, query);
+  }
+
+  @Get('cashes/check-number')
+  checkCashNumber(@Query() query: CheckNumberQueryDto) {
+    return this.cashService.checkCashNumber(query);
+  }
+
+  @Get('last-cashes')
+  getLastCashes(@Req() req: AuthReq) {
+    return this.cashService.getLastCashes(req.user);
   }
 
   @Post('cash')
-  createCash(@Req() req: Request, @Body() body: CreateCashDto) {
+  createCash(@Req() req: AuthReq, @Body() body: CreateCashDto) {
     return this.cashService.createCash(req.user, body);
+  }
+
+  @Get('cash/:id')
+  getCash(@Req() req: AuthReq, @Param('id', ParseIntPipe) id: number) {
+    return this.cashService.getCash(req.user, id);
   }
 
   @Patch('cash/employee/:id')
   updateCash(
-    @Req() req: Request,
-    @Param('id') id: number,
+    @Req() req: AuthReq,
+    @Param('id', ParseIntPipe) id: number,
     @Body() body: UpdateCashDto,
   ) {
     return this.cashService.updateCash(req.user, id, body);
@@ -87,42 +108,53 @@ export class CashController {
 
   @Post('cash/employee/payment/:id')
   createPaymant(
-    @Req() req: Request,
-    @Param('id') id: number,
+    @Req() req: AuthReq,
+    @Param('id', ParseIntPipe) id: number,
     @Body() body: CreatePaymantDto,
   ) {
     return this.cashService.createPaymant(req.user, id, body);
   }
 
-  @Patch('cash/select-service')
-  selectService(@Req() req: Request) {
-    return this.cashService.selectService(req.user);
+  @Patch('cash/status/:id')
+  updateCashStatus(
+    @Req() req: AuthReq,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: UpdateCashStatusDto,
+  ) {
+    return this.cashService.updateCashStatus(req.user, id, body);
   }
 
-  //-----------------------------Admin----------------------------------//
-  // XATOLIK TUZATILDI: bu yerda avval TAKRORLANGAN @Get('dashboard') bor
-  // edi - butunlay OLIB TASHLANDI. Yuqoridagi getDashboard() ADMIN va
-  // EMPLOYEE ikkalasi uchun ham ishlaydi (kerak bo'lsa farqni
-  // cashService.getDashboard() ichida req.user.role orqali ажratish mumkin).
-
-  @Get('users')
-  getUsers(@Req() req: Request) {
-    return this.cashService.getUsers(req.user);
+  @Patch('cash/employee/bonus/:id')
+  updateCashEmployeeBonus(
+    @Req() req: AuthReq,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: UpdateCashEmployeeBonusDto,
+  ) {
+    return this.cashService.updateCashEmployeeBonus(req.user, id, body);
   }
 
-  @Delete('user/:id')
-  deleteUser(@Req() req: Request, @Param('id') id: number) {
-    return this.cashService.deleteUser(req.user, id);
+  @Delete('cash/:id')
+  deleteCash(@Req() req: AuthReq, @Param('id', ParseIntPipe) id: number) {
+    return this.cashService.deleteCash(req.user, id);
   }
 
-  @Get('user/me')
-  getMe(@Req() req: Request) {
-    return this.cashService.getMe(req.user);
+  @Get('cash-history/:id')
+  getCashHistory(@Req() req: AuthReq, @Param('id', ParseIntPipe) id: number) {
+    return this.cashService.getCashHistory(req.user, id);
+  }
+
+  @Post('cash/:id/voucher/send')
+  sendVoucher(
+    @Req() req: AuthReq,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: VoucherSendDto,
+  ) {
+    return this.voucherService.send(req.user, id, body);
   }
 
   @Get('history')
   findAll(
-    @Req() req: Request,
+    @Req() req: AuthReq,
     @Query('page') page?: string,
     @Query('limit') limit?: string,
     @Query('userId') userId?: string,
@@ -143,134 +175,100 @@ export class CashController {
     );
   }
 
+  //---------------------------- Foydalanuvchilar ----------------------------//
+  @Get('users')
+  getUsers(@Req() req: AuthReq) {
+    return this.cashService.getUsers(req.user);
+  }
+
+  @Get('users/options')
+  getUserOptions() {
+    return this.cashService.getUserOptions();
+  }
+
+  @Get('users/:id/cashes')
+  getUserCashes(
+    @Req() req: AuthReq,
+    @Param('id', ParseIntPipe) id: number,
+    @Query() query: DashboardFilterDto,
+  ) {
+    return this.cashService.getUserCashes(
+      req.user,
+      id,
+      query.startDate,
+      query.endDate,
+    );
+  }
+
+  @Get('user/me')
+  getMe(@Req() req: AuthReq) {
+    return this.cashService.getMe(req.user);
+  }
+
+  @Post('user')
+  createUser(@Req() req: AuthReq, @Body() body: CreateUserDto) {
+    return this.cashService.createUser(req.user, body);
+  }
+
   @Patch('user/:id')
   updateUserAdmin(
-    @Req() req: Request,
-    @Param('id') id: number,
+    @Req() req: AuthReq,
+    @Param('id', ParseIntPipe) id: number,
     @Body() body: UpdateUserDto,
   ) {
     return this.cashService.updateUser(req.user, id, body);
   }
 
-  @Patch('cash/status/:id')
-  updateCashStatus(
-    @Req() req: Request,
-    @Param('id') id: number,
-    @Body() body: UpdateCashStatusDto,
-  ) {
-    return this.cashService.updateCashStatus(req.user, id, body);
+  @Delete('user/:id')
+  deleteUser(@Req() req: AuthReq, @Param('id', ParseIntPipe) id: number) {
+    return this.cashService.deleteUser(req.user, id);
   }
 
-  @Get('/cashes/status-counts')
-  getCashStatusCounts(
-    @Req() req: Request,
-    @Query('cashNumber') cashNumber: string,
-    @Query('startDate') startDate: string,
-    @Query('endDate') endDate: string,
-    @Query('userId') userId?: string,
-  ) {
-    return this.cashService.getCashStatusCounts(req.user, {
-      cashNumber,
-      startDate,
-      endDate,
-      userId,
-    });
+  @Post('change-password')
+  changePassword(@Req() req: AuthReq, @Body() body: ChangePasswordDto) {
+    return this.cashService.changePassword(req.user, body);
   }
 
-  @Post('user')
-  createUser(@Req() req: Request, @Body() body: CreateUserDto) {
-    return this.cashService.createUser(req.user, body);
-  }
-
-  @Get('company/type/:id')
-  getCompanyTypeById(
-    @Req() req: Request,
-    @Param('id') id: number,
-    @Query() query: OptionalDateRangeDto,
-  ) {
-    return this.cashService.getCompanyTypeById(req.user, id, query);
-  }
-
+  //------------------------- Xizmat turlari / katalog -------------------------//
   @Get('company/type')
   getCompanyType() {
     return this.cashService.getCompanyType();
   }
 
-  @Get('cash/:id')
-  getCash(@Req() req: Request, @Param('id') id: number) {
-    return this.cashService.getCash(req.user, id);
+  @Get('company/type/:id')
+  getCompanyTypeById(
+    @Req() req: AuthReq,
+    @Param('id', ParseIntPipe) id: number,
+    @Query() query: OptionalDateRangeDto,
+  ) {
+    return this.cashService.getCompanyTypeById(req.user, id, query);
+  }
+
+  @Patch('cash/select-service')
+  selectService(@Req() req: AuthReq) {
+    return this.cashService.selectService(req.user);
   }
 
   @Post('service-type')
-  createServiceType(@Req() req: Request, @Body() body: CreateServiceTypeDto) {
+  createServiceType(@Req() req: AuthReq, @Body() body: CreateServiceTypeDto) {
     return this.cashService.createServiceType(req.user, body);
   }
 
   @Post('company')
-  createCompany(@Req() req: Request, @Body() body: CreateServiceCompanyDto) {
+  createCompany(@Req() req: AuthReq, @Body() body: CreateServiceCompanyDto) {
     return this.cashService.createServiceCompany(req.user, body);
   }
 
-  @Get('dashboard/chart')
-  getDashboardChart(@Req() req: Request, @Query() query: DashboardFilterDto) {
-    return this.cashService.getChartData(req.user, query);
-  }
-
-  @Get('dashboard-chart')
-  getDashboardChart2(@Req() req: Request, @Query() query: DashboardFilterDto) {
-    return this.cashService.getDashboardCharts(
-      req.user,
-      new Date(query.startDate),
-      new Date(query.endDate),
-    );
-  }
-
-  @Get('users/:id/cashes')
-  getUserCashes(
-    @Req() req: Request,
-    @Param('id') id: number,
-    @Query('startDate') startDate: string,
-    @Query('endDate') endDate: string,
-  ) {
-    return this.cashService.getUserCashes(req.user, id, startDate, endDate);
-  }
-
   @Delete('service/:id')
-  deleteService(@Req() req: Request, @Param('id') id: number) {
+  deleteService(@Req() req: AuthReq, @Param('id', ParseIntPipe) id: number) {
     return this.cashService.deleteService(req.user, id);
   }
 
   @Delete('service-type/:id')
-  deleteServiceType(@Req() req: Request, @Param('id') id: number) {
-    return this.cashService.deleteServiceType(req.user, id);
-  }
-
-  @Delete('cash/:id')
-  deleteCash(@Req() req: Request, @Param('id') id: number) {
-    return this.cashService.deleteCash(req.user, id);
-  }
-
-  @Get('cash-history/:id')
-  getCashHistory(@Req() req: Request, @Param('id') id: number) {
-    return this.cashService.getCashHistory(req.user, id);
-  }
-
-  @Patch('cash/employee/bonus/:id')
-  updateCashEmployeeBonus(
-    @Req() req: Request,
-    @Param('id') id: number,
-    @Body() body: UpdateCashEmployeeBonusDto,
+  deleteServiceType(
+    @Req() req: AuthReq,
+    @Param('id', ParseIntPipe) id: number,
   ) {
-    return this.cashService.updateCashEmployeeBonus(req.user, id, body);
-  }
-
-  @Get('last-cashes')
-  getLastCashes(@Req() req: Request) {
-    return this.cashService.getLastCashes(req.user);
-  }
-
-  @Post('change-password')
-  changePassword(@Req() req: Request, @Body() body: { password: string }) {
-    return this.cashService.changePassword(req.user, body.password);
+    return this.cashService.deleteServiceType(req.user, id);
   }
 }

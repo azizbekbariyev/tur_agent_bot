@@ -22,7 +22,7 @@ export class Notification {
   type!: string;
 
   @Column({
-    type: 'timestamp',
+    type: 'timestamptz',
     default: () => 'CURRENT_TIMESTAMP',
   })
   created_at!: Date;

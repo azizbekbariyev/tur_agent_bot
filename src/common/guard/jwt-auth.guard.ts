@@ -7,13 +7,16 @@ import {
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { Request } from 'express';
+import { DataSource } from 'typeorm';
 import { UserToken } from 'src/types/token.type';
+import { User } from '../../bot/models/user';
 
 @Injectable()
 export class JwtAuthGuard implements CanActivate {
   constructor(
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
+    private readonly dataSource: DataSource,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -32,13 +35,28 @@ export class JwtAuthGuard implements CanActivate {
       });
     }
 
-    if (!payload.id || !payload.role) {
+    if (!payload.id) {
       throw new UnauthorizedException({
         message: 'Token ichida foydalanuvchi aniqlanmadi',
       });
     }
 
-    req['user'] = payload;
+    // O'chirilgan/bloklangan foydalanuvchi token muddati tugaguncha ishlab yurmasin.
+    // Rol ham bazadan olinadi - admin rolni o'zgartirsa darhol kuchga kiradi.
+    const user = await this.dataSource
+      .getRepository(User)
+      .findOne({ where: { id: payload.id } });
+    if (!user || user.isDeleted || !user.status) {
+      throw new UnauthorizedException({
+        message: 'Foydalanuvchi topilmadi yoki bloklangan',
+      });
+    }
+
+    req['user'] = {
+      id: user.id,
+      role: user.type,
+      telegram_id: user.telegramId,
+    };
     return true;
   }
 

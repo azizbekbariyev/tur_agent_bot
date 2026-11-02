@@ -51,7 +51,7 @@ export class Money {
   cash!: Cash;
 
   @Column({
-    type: 'timestamp',
+    type: 'timestamptz',
     default: () => 'CURRENT_TIMESTAMP',
   })
   created_at!: Date;

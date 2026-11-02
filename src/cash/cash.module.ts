@@ -14,7 +14,10 @@ import { BotModule } from 'src/bot/bot.module';
 import { CashServices } from '../bot/models/cash_services';
 import { ServiceType } from '../bot/models/service_type';
 import { Brutto } from '../bot/models/brutto';
+import { CashStatusHistory } from '../bot/models/cash_status_history';
 import { CashNotificationService } from './cash-notification.service';
+import { VoucherService } from './voucher.service';
+import { SettingsModule } from '../settings/settings.module';
 
 @Module({
   imports: [
@@ -29,10 +32,12 @@ import { CashNotificationService } from './cash-notification.service';
       ServiceType,
       Brutto,
       CashServices,
+      CashStatusHistory,
     ]),
     BotModule,
+    SettingsModule,
   ],
   controllers: [CashController],
-  providers: [CashService, JwtService, CashNotificationService],
+  providers: [CashService, JwtService, CashNotificationService, VoucherService],
 })
 export class CashModule {}

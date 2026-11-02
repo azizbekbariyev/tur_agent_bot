@@ -1,10 +1,9 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 
 import { User } from 'src/bot/models/user';
 import { Notification } from 'src/bot/models/notification';
-import { BotService } from 'src/bot/bot.service';
 
 @Injectable()
 export class CashNotificationService {
@@ -14,13 +13,11 @@ export class CashNotificationService {
 
     @InjectRepository(Notification)
     private readonly notificationRepository: Repository<Notification>,
-
-    private readonly botService: BotService,
   ) {}
 
   async notifyUser(userId: number, sms: string) {
     const targetUser = await this.userRepository.findOne({
-      where: { id: userId },
+      where: { id: userId, isDeleted: false },
     });
 
     if (!targetUser) return;
@@ -33,16 +30,19 @@ export class CashNotificationService {
     );
   }
 
-  /**
-   * Barcha ADMIN'larga SMS + notification yuboradi
-   */
-  async notifyAdmins(sms: string) {
+  /** Faol rahbarlar (ADMIN va SUPERADMIN) */
+  async adminIds(): Promise<number[]> {
     const admins = await this.userRepository.find({
-      where: { type: 'ADMIN' },
+      where: { type: In(['ADMIN', 'SUPERADMIN']), isDeleted: false },
+      select: { id: true },
     });
+    return admins.map((a) => a.id);
+  }
 
-    for (const admin of admins) {
-      await this.notifyUser(admin.id, sms);
+  /** Barcha rahbarlarga notification yozadi */
+  async notifyAdmins(sms: string) {
+    for (const id of await this.adminIds()) {
+      await this.notifyUser(id, sms);
     }
   }
 }

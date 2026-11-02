@@ -9,6 +9,13 @@ import { CashModule } from './cash/cash.module';
 import { AuthModule } from './auth/auth.module';
 import { ScheduleModule } from '@nestjs/schedule';
 import { UserModule } from './user/user.module';
+import { SettingsModule } from './settings/settings.module';
+import { PartnersModule } from './partners/partners.module';
+import { ClientsModule } from './clients/clients.module';
+import { ReportsModule } from './reports/reports.module';
+import { BruttoRateNumeric1761955200000 } from './migrations/1761955200000-BruttoRateNumeric';
+import { TimestampsWithTimeZone1761955300000 } from './migrations/1761955300000-TimestampsWithTimeZone';
+import { CashSeqNo1761955400000 } from './migrations/1761955400000-CashSeqNo';
 
 @Module({
   imports: [
@@ -31,6 +38,13 @@ import { UserModule } from './user/user.module';
       password: process.env.PG_PASSWORD,
       database: process.env.PG_DB,
       entities: [],
+      // Migratsiyalar synchronize'dan OLDIN ishlaydi: ustun turini ma'lumot yo'qotmasdan o'zgartirish uchun
+      migrations: [
+        BruttoRateNumeric1761955200000,
+        TimestampsWithTimeZone1761955300000,
+        CashSeqNo1761955400000,
+      ],
+      migrationsRun: true,
       synchronize: true,
       autoLoadEntities: true,
       dropSchema: false,
@@ -40,6 +54,10 @@ import { UserModule } from './user/user.module';
     CashModule,
     AuthModule,
     UserModule,
+    SettingsModule,
+    PartnersModule,
+    ClientsModule,
+    ReportsModule,
   ],
   controllers: [],
   providers: [],

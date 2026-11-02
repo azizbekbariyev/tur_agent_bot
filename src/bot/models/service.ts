@@ -8,6 +8,7 @@ import {
 } from 'typeorm';
 import { ServiceType } from './service_type';
 import { CashServices } from './cash_services';
+import { Partner } from './partner';
 
 @Entity('service')
 export class Service {
@@ -21,7 +22,7 @@ export class Service {
   name!: string;
 
   @Column({
-    type: 'timestamp',
+    type: 'timestamptz',
     default: () => 'CURRENT_TIMESTAMP',
   })
   created_at!: Date;
@@ -31,6 +32,11 @@ export class Service {
 
   @OneToMany(() => CashServices, (cashServices) => cashServices.service)
   cashServices!: CashServices[];
+
+  // company_name matni o'rniga alohida hamkor yozuvi (eski ma'lumotlar ishga tushganda bog'lanadi)
+  @ManyToOne(() => Partner, (partner) => partner.services, { nullable: true })
+  @JoinColumn({ name: 'partner_id' })
+  partner?: Partner | null;
 
   @ManyToOne(() => ServiceType, (serviceType) => serviceType.services)
   @JoinColumn({ name: 'service_type_id' })
