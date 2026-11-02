@@ -94,6 +94,11 @@ export class CashFilterDto {
   @IsString()
   userId?: string;
 
+  // own - joriy foydalanuvchi egasi bo'lgan kassalar; shared - qo'shimcha xodimi bor kassalar
+  @IsOptional()
+  @IsIn(['own', 'shared'])
+  participation?: 'own' | 'shared';
+
   // created_at bo'yicha, ikkala chegara ham kiradi
   @IsOptional()
   @IsDateString()

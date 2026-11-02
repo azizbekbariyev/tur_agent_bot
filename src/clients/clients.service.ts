@@ -12,6 +12,8 @@ import { Cash } from '../bot/models/cash';
 import { escapeLike, normalizeTelegram } from '../common/text';
 import { tashkentDate } from '../common/date';
 import { getBrutto, getDebt, isActiveStatus } from '../cash/cash.utils';
+import { canViewAll } from '../common/roles';
+import { UserReq } from '../types/user.type';
 import { linkPassengersToClients } from './client-link';
 import { ClientsQueryDto, UpdateClientDto } from './clients.dto';
 
@@ -49,8 +51,11 @@ export class ClientsService implements OnModuleInit {
     }
   }
 
-  /** Mijozlarning kassalari (cancelled va o'chirilganlar kirmaydi) */
-  private async tripsByClient(clientIds: number[]) {
+  /**
+   * Mijozlarning kassalari (cancelled va o'chirilganlar kirmaydi).
+   * `ownerId` berilsa (xodim) - faqat u egasi yoki qo'shimcha xodimi bo'lgan kassalar.
+   */
+  private async tripsByClient(clientIds: number[], ownerId?: number) {
     const map = new Map<number, Cash[]>();
     if (!clientIds.length) return map;
 
@@ -58,13 +63,20 @@ export class ClientsService implements OnModuleInit {
       where: { client: { id: In(clientIds) } },
       relations: {
         client: true,
-        cash: { brutto: true, moneys: true, user: true },
+        cash: { brutto: true, moneys: true, user: true, additionalUser: true },
       },
     });
 
     for (const p of passengers) {
       const cash = p.cash;
       if (!cash || cash.isDeleted || cash.status === 'cancelled') continue;
+      if (
+        ownerId !== undefined &&
+        cash.user?.id !== ownerId &&
+        cash.additionalUser?.id !== ownerId
+      ) {
+        continue;
+      }
       const list = map.get(p.client!.id) ?? [];
       if (!list.some((c) => c.id === cash.id)) list.push(cash);
       map.set(p.client!.id, list);
@@ -86,13 +98,27 @@ export class ClientsService implements OnModuleInit {
     };
   }
 
-  async list(query: ClientsQueryDto) {
+  /** Xodim uchun: faqat o'z kassalaridagi mijozlar (boshqa xodimlarning mijozlari ko'rinmaydi) */
+  private scopeOf(user: UserReq) {
+    return canViewAll(user.role) ? undefined : user.id;
+  }
+
+  async list(user: UserReq, query: ClientsQueryDto) {
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
+    const ownerId = this.scopeOf(user);
 
     const qb = this.clientRepository
       .createQueryBuilder('client')
       .where('client.is_deleted = false');
+    if (ownerId !== undefined) {
+      qb.andWhere(
+        `EXISTS (SELECT 1 FROM passenger p JOIN cash c ON c.id = p."cashId"
+          WHERE p.client_id = client.id AND c.is_deleted = false AND c.status <> 'cancelled'
+            AND (c.user_id = :ownerId OR c.additional_user = :ownerId))`,
+        { ownerId },
+      );
+    }
 
     const search = query.search?.trim();
     if (search) {
@@ -113,7 +139,10 @@ export class ClientsService implements OnModuleInit {
       .take(limit)
       .getManyAndCount();
 
-    const trips = await this.tripsByClient(clients.map((c) => c.id));
+    const trips = await this.tripsByClient(
+      clients.map((c) => c.id),
+      ownerId,
+    );
 
     return {
       data: clients.map((c) => {
@@ -133,13 +162,18 @@ export class ClientsService implements OnModuleInit {
     };
   }
 
-  async getOne(id: number) {
+  async getOne(user: UserReq, id: number) {
     const client = await this.clientRepository.findOne({
       where: { id, isDeleted: false },
     });
     if (!client) throw new NotFoundException('Mijoz topilmadi');
 
-    const cashes = (await this.tripsByClient([id])).get(id) ?? [];
+    const ownerId = this.scopeOf(user);
+    const cashes = (await this.tripsByClient([id], ownerId)).get(id) ?? [];
+    // Xodim o'z kassalarida bo'lmagan mijozni ko'rmaydi
+    if (ownerId !== undefined && !cashes.length) {
+      throw new NotFoundException('Mijoz topilmadi');
+    }
     const s = this.stats(cashes);
 
     return {
@@ -171,7 +205,9 @@ export class ClientsService implements OnModuleInit {
     };
   }
 
-  async update(id: number, dto: UpdateClientDto) {
+  async update(user: UserReq, id: number, dto: UpdateClientDto) {
+    // Ko'rish huquqi yo'q bo'lsa - 404 (getOne tekshiradi)
+    await this.getOne(user, id);
     const client = await this.clientRepository.findOne({
       where: { id, isDeleted: false },
     });
@@ -193,6 +229,6 @@ export class ClientsService implements OnModuleInit {
     if (Object.keys(patch).length) {
       await this.clientRepository.update({ id }, patch);
     }
-    return this.getOne(id);
+    return this.getOne(user, id);
   }
 }

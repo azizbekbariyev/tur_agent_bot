@@ -10,12 +10,12 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { JwtAuthGuard } from '../common/guard/jwt-auth.guard';
-import { requireManager } from '../common/roles';
+import { requireClientsAccess } from '../common/roles';
 import { UserReq } from '../types/user.type';
 import { ClientsService } from './clients.service';
 import { ClientsQueryDto, UpdateClientDto } from './clients.dto';
 
-// Mijozlar bazasi - rahbarlar va buxgalter uchun
+// Mijozlar bazasi: rahbar va buxgalter - hammasi; xodim - faqat o'z kassalaridagi mijozlar
 @Controller('clients')
 @UseGuards(JwtAuthGuard)
 export class ClientsController {
@@ -23,14 +23,14 @@ export class ClientsController {
 
   @Get()
   list(@Req() req: { user: UserReq }, @Query() query: ClientsQueryDto) {
-    requireManager(req.user);
-    return this.clientsService.list(query);
+    requireClientsAccess(req.user);
+    return this.clientsService.list(req.user, query);
   }
 
   @Get(':id')
   getOne(@Req() req: { user: UserReq }, @Param('id', ParseIntPipe) id: number) {
-    requireManager(req.user);
-    return this.clientsService.getOne(id);
+    requireClientsAccess(req.user);
+    return this.clientsService.getOne(req.user, id);
   }
 
   @Patch(':id')
@@ -39,7 +39,7 @@ export class ClientsController {
     @Param('id', ParseIntPipe) id: number,
     @Body() body: UpdateClientDto,
   ) {
-    requireManager(req.user);
-    return this.clientsService.update(id, body);
+    requireClientsAccess(req.user);
+    return this.clientsService.update(req.user, id, body);
   }
 }

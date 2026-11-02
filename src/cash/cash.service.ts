@@ -44,6 +44,7 @@ import {
   previousPeriod,
   sqlTashkent,
   tashkentDate,
+  daysBetween,
   tashkentMidnight,
 } from '../common/date';
 import { escapeLike } from '../common/text';
@@ -81,6 +82,7 @@ import {
   isActiveStatus,
   rateOf,
   cashLabel,
+  formatSeqNo,
   hasContractNumber,
   roundToNearestThousand,
   toUZS,
@@ -93,22 +95,23 @@ const TRANSITIONS: Record<
   CashStatus,
   Partial<Record<CashStatus, TransitionRole[]>>
 > = {
+  // Bekor qilish - faqat rahbar (xodimda bu tugma umuman yo'q, backend 403)
   draft: {
     pending_approval: ['EMPLOYEE', 'ADMIN'],
-    cancelled: ['EMPLOYEE', 'ADMIN'],
+    cancelled: ['ADMIN'],
   },
   pending_approval: {
     approved: ['ADMIN'],
     sent_for_rework: ['ADMIN'],
-    cancelled: ['EMPLOYEE'],
+    cancelled: ['ADMIN'],
   },
   approved: {
     closed: ['ADMIN'],
-    cancelled: ['EMPLOYEE'],
+    cancelled: ['ADMIN'],
   },
   sent_for_rework: {
     pending_approval: ['EMPLOYEE', 'ADMIN'],
-    cancelled: ['EMPLOYEE', 'ADMIN'],
+    cancelled: ['ADMIN'],
   },
   closed: {
     approved: ['ADMIN'], // qayta ochish
@@ -126,6 +129,26 @@ function canTransition(from: string, to: string, role: string) {
       : null;
   if (!r) return false;
   return !!TRANSITIONS[from as CashStatus]?.[to as CashStatus]?.includes(r);
+}
+
+/**
+ * Xodim tasdiqlangan/yopilgan kassani tahrirlasa yoki unga to'lov qo'shsa,
+ * kassa "Kutilmoqda" ga qaytadi - rahbar qayta tekshirib tasdiqlaydi.
+ */
+const REVIEW_AGAIN_STATUSES: string[] = ['approved', 'closed'];
+const needsReviewAgain = (user: UserReq, status: string) =>
+  user.role === 'EMPLOYEE' && REVIEW_AGAIN_STATUSES.includes(status);
+
+/**
+ * O'tish umuman mavjud, lekin bu rol uchun emas (masalan, xodim bekor qilmoqchi) - 403;
+ * bunday o'tish yo'q - 400.
+ */
+function assertTransition(from: string, to: string, role: string) {
+  if (canTransition(from, to, role)) return;
+  if (TRANSITIONS[from as CashStatus]?.[to as CashStatus]) {
+    throw new ForbiddenException('Ruxsat yo‘q');
+  }
+  throw new BadRequestException(`${from} -> ${to} o'tishga ruxsat yo'q`);
 }
 
 /** status-counts javobidagi kalitlar ('due' - holat emas, qarzdorlik filtri) */
@@ -154,6 +177,13 @@ const publicUser = (u?: User | null) =>
 const withRole = (u: User) => ({ ...u, role: u.type });
 
 const num = (v: unknown) => Number(v ?? 0);
+
+/** 'YYYY-MM-DD' + n kun */
+const addDay = (day: string, n: number) => {
+  const d = new Date(`${day}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+};
 
 /** Kassa sanasi: 'YYYY-MM-DD' kelsa - Toshkent yarim tuni, aks holda ISO lahza */
 const parseCashDate = (value: string) =>
@@ -267,6 +297,12 @@ export class CashService {
         '(c.user_id = :filterUserId OR c.additional_user = :filterUserId)',
         { filterUserId: userId },
       );
+    }
+
+    if (f.participation === 'own') {
+      qb.andWhere('c.user_id = :ownerId', { ownerId: user.id });
+    } else if (f.participation === 'shared') {
+      qb.andWhere('c.additional_user IS NOT NULL');
     }
 
     const start = parseDate(f.startDate, 'startDate', true);
@@ -718,10 +754,10 @@ export class CashService {
       WHERE c.is_deleted = false AND ${ACTIVE_STATUS_SQL}
         AND c.created_at BETWEEN $1 AND $2 AND ${column} IS NOT NULL`;
 
-    const [current, prevCashCount, me, employees, profits, debtCashes] =
+    const [current, previous, me, employees, profits, debtCashes] =
       await Promise.all([
         own(start, end).getMany(),
-        own(prevStart, prevEnd).getCount(),
+        own(prevStart, prevEnd).getMany(),
         this.userRepository.findOne({ where: { id: user.id } }),
         this.userRepository.find({
           where: { type: 'EMPLOYEE', isDeleted: false, status: true },
@@ -738,6 +774,8 @@ export class CashService {
           .leftJoinAndSelect('c.brutto', 'b')
           .leftJoinAndSelect('c.moneys', 'm')
           .leftJoinAndSelect('c.passengers', 'p')
+          .leftJoinAndSelect('c.statusHistory', 'sh')
+          .leftJoinAndSelect('sh.changedByUser', 'shu')
           .where('c.is_deleted = false')
           .andWhere(ACTIVE_STATUS_SQL)
           .andWhere('(c.user_id = :uid OR c.additional_user = :uid)', {
@@ -745,6 +783,7 @@ export class CashService {
           })
           .getMany(),
       ]);
+    const prevCashCount = previous.length;
 
     // Reyting: faol xodimlar (va o'zi) yalpi foyda bo'yicha
     const profitBy = new Map(
@@ -765,14 +804,91 @@ export class CashService {
       weekly[Math.min(4, Math.floor((day - 1) / 7))] += getProfit(cash);
     }
 
+    // Davr bo'yicha foyda: 14 kungacha - kunlik, undan uzun - 7 kunlik bo'laklar
+    const firstDay = tashkentDate(start);
+    const lastDay = tashkentDate(end);
+    const totalDays = daysBetween(firstDay, lastDay) + 1;
+    const step = totalDays <= 14 ? 1 : 7;
+    const trend: { from: string; to: string; profit: number }[] = [];
+    for (let i = 0; i < totalDays; i += step) {
+      const from = addDay(firstDay, i);
+      const to = addDay(firstDay, Math.min(i + step, totalDays) - 1);
+      trend.push({ from, to, profit: 0 });
+    }
+    for (const cash of current) {
+      const idx = Math.floor(
+        daysBetween(firstDay, tashkentDate(cash.created_at)) / step,
+      );
+      if (trend[idx]) trend[idx].profit += getProfit(cash);
+    }
+
+    const sum = (list: Cash[], fn: (c: Cash) => number) =>
+      list.reduce((acc, c) => acc + fn(c), 0);
+    const today = tashkentDate(new Date());
+    const in7 = addDay(today, 7);
+    const lastStatus = (cash: Cash, status: string) =>
+      [...(cash.statusHistory ?? [])]
+        .filter((h) => h.status === status)
+        .sort(
+          (a, b) =>
+            b.created_at.getTime() - a.created_at.getTime() || b.id - a.id,
+        )[0];
+    const brief = (cash: Cash) => {
+      const p = [...(cash.passengers ?? [])].sort(byId)[0];
+      return {
+        cashId: cash.id,
+        seqNo: cash.seq_no,
+        cashNumber: cash.cash_number,
+        client: p ? `${p.lastName ?? ''} ${p.firstName}`.trim() : null,
+        destination: cash.destination,
+        departureDate: tashkentDate(cash.departure_date),
+        debt: Math.max(getDebt(cash), 0),
+      };
+    };
+    const note = (cash: Cash, status: string) => {
+      const h = lastStatus(cash, status);
+      return {
+        comment: h?.comment ?? null,
+        by: h?.changedByUser
+          ? `${h.changedByUser.firstName} ${h.changedByUser.lastName ?? ''}`.trim()
+          : null,
+        at: h?.created_at ?? null,
+      };
+    };
+    const byDeparture = (a: Cash, b: Cash) =>
+      a.departure_date.localeCompare(b.departure_date);
+
     return {
       cashCount: current.length,
       prevCashCount,
-      brutto: current.reduce((s, c) => s + getBrutto(c), 0),
-      profit: current.reduce((s, c) => s + getProfit(c), 0),
-      bonus: Math.round(
-        current.reduce((s, c) => s + getBonus(c, sharePercent), 0),
-      ),
+      brutto: sum(current, getBrutto),
+      profit: sum(current, getProfit),
+      bonus: Math.round(sum(current, (c) => getBonus(c, sharePercent))),
+      // Oldingi xuddi shunday davr - solishtirish uchun
+      prev: {
+        brutto: sum(previous, getBrutto),
+        profit: sum(previous, getProfit),
+        bonus: Math.round(sum(previous, (c) => getBonus(c, sharePercent))),
+      },
+      trend: trend.map((t) => ({ ...t, profit: Math.round(t.profit) })),
+      // 7 kun ichida uchadigan kassalar (qarzi bilan)
+      upcoming: debtCashes
+        .filter((c) => {
+          const d = tashkentDate(c.departure_date);
+          return d >= today && d <= in7;
+        })
+        .sort(byDeparture)
+        .map(brief),
+      // Rahbar qayta ishlashga qaytargan kassalar (izohi bilan)
+      rework: debtCashes
+        .filter((c) => c.status === 'sent_for_rework')
+        .sort(byDeparture)
+        .map((c) => ({ ...brief(c), ...note(c, 'sent_for_rework') })),
+      // Tekshiruvdagi (Kutilmoqda) kassalar
+      pending: debtCashes
+        .filter((c) => c.status === 'pending_approval')
+        .sort(byDeparture)
+        .map((c) => ({ ...brief(c), ...note(c, 'pending_approval') })),
       bonusPercent: sharePercent,
       rank,
       rankTotal: ids.size,
@@ -1059,21 +1175,33 @@ export class CashService {
         "Bekor qilingan kassaga to'lov qo'shilmaydi",
       );
     }
+    const reviewAgain = needsReviewAgain(user, cash.status);
 
-    const money = await this.moneyRepository.save({
-      type: body.type,
-      money_received: body.amount,
-      currency: body.currency,
-      currency_amount: rateOf(body.currency, body.currency_amount),
-      cash: { id },
+    await this.dataSource.transaction(async (manager) => {
+      const money = await manager.getRepository(Money).save({
+        type: body.type,
+        money_received: body.amount,
+        currency: body.currency,
+        currency_amount: rateOf(body.currency, body.currency_amount),
+        cash: { id },
+      });
+      await manager.getRepository(History).save({
+        name: 'money',
+        old_column: '',
+        new_column: `${moneyText(money)}${body.comment?.trim() ? ` — ${body.comment.trim()}` : ''}`,
+        user: { id: user.id },
+        cash: { id },
+      });
+      if (reviewAgain) {
+        await this.sendBackToReview(
+          manager,
+          cash,
+          user,
+          "Xodim to'lov qo'shdi",
+        );
+      }
     });
-    await this.historyRepository.save({
-      name: 'money',
-      old_column: '',
-      new_column: `${moneyText(money)}${body.comment?.trim() ? ` — ${body.comment.trim()}` : ''}`,
-      user: { id: user.id },
-      cash: { id },
-    });
+    if (reviewAgain) await this.notifyReviewAgain(cash);
 
     cash.moneys = await this.moneyRepository.find({ where: { cash: { id } } });
     return {
@@ -1102,19 +1230,20 @@ export class CashService {
       ) {
         throw new NotFoundException('Kassa topilmadi');
       }
+      if (cash.status === 'cancelled') {
+        throw new BadRequestException(
+          'Bekor qilingan kassani tahrirlab bo‘lmaydi',
+        );
+      }
       const oldStatus = cash.status;
+      // Xodim tasdiqlangan/yopilgan kassani tahrirlasa - holatni o'zi tanlamaydi
+      const reviewAgain = needsReviewAgain(user, cash.status);
+      if (reviewAgain) body.status = undefined;
 
       // Holat faqat ruxsat etilgan o'tish bo'yicha o'zgaradi (frontend bilan bir xil qoida)
       const statusChanged =
         body.status !== undefined && String(body.status) !== cash.status;
-      if (
-        statusChanged &&
-        !canTransition(cash.status, body.status!, user.role)
-      ) {
-        throw new BadRequestException(
-          `${cash.status} -> ${body.status} o'tishga ruxsat yo'q`,
-        );
-      }
+      if (statusChanged) assertTransition(cash.status, body.status!, user.role);
 
       const cashNumber =
         body.cash_number === undefined
@@ -1412,12 +1541,19 @@ export class CashService {
         });
       }
 
-      return { cash, oldStatus, statusChanged };
+      // Haqiqatan nimadir o'zgargan bo'lsa - qayta tekshiruvga
+      const sentBack = reviewAgain && history.length > 0;
+      if (sentBack) {
+        await this.sendBackToReview(manager, cash, user, 'Xodim tahrirladi');
+      }
+
+      return { cash, oldStatus, statusChanged, sentBack };
     });
 
     if (result.statusChanged) {
       await this.notifyStatusChange(result.cash, body.status!, user, undefined);
     }
+    if (result.sentBack) await this.notifyReviewAgain(result.cash);
 
     return this.getCash(user, id);
   }
@@ -1427,11 +1563,7 @@ export class CashService {
     if (!isAdmin(user.role) && !this.isParticipant(cash, user.id)) {
       throw new ForbiddenException('Bu kassa sizga tegishli emas');
     }
-    if (!canTransition(cash.status, body.status, user.role)) {
-      throw new BadRequestException(
-        `${cash.status} -> ${body.status} o'tishga ruxsat yo'q`,
-      );
-    }
+    assertTransition(cash.status, body.status, user.role);
 
     const comment = body.comment?.trim() || null;
     await this.dataSource.transaction(async (manager) => {
@@ -1498,18 +1630,45 @@ export class CashService {
     }
   }
 
-  /** ADMIN istalgan kassani, xodim faqat o'zi ochgan draft/cancelled kassani o'chiradi (soft delete) */
+  /** Kassani "Kutilmoqda" ga qaytaradi va sababini holat tarixiga yozadi (transaction ichida) */
+  private async sendBackToReview(
+    manager: EntityManager,
+    cash: Cash,
+    user: UserReq,
+    reason: string,
+  ) {
+    await manager
+      .getRepository(Cash)
+      .update(
+        { id: cash.id },
+        { status: CashStatus.PENDING_APPROVAL, updated_at: new Date() },
+      );
+    await manager.getRepository(History).save({
+      name: 'status',
+      old_column: cash.status,
+      new_column: CashStatus.PENDING_APPROVAL,
+      user: { id: user.id },
+      cash: { id: cash.id },
+    });
+    await manager.getRepository(CashStatusHistory).save({
+      status: CashStatus.PENDING_APPROVAL,
+      comment: reason,
+      cash: { id: cash.id },
+      changedByUser: { id: user.id },
+    });
+  }
+
+  /** Rahbarlarga: "Kassa ID 000XX qayta tekshiruvga yuborildi" (bildirishnoma + Telegram) */
+  private async notifyReviewAgain(cash: Cash) {
+    const sms = `Kassa ID ${formatSeqNo(cash.seq_no)} qayta tekshiruvga yuborildi`;
+    await this.cashNotificationService.notifyAdmins(sms, { telegram: true });
+  }
+
+  /** Faqat rahbar o'chiradi (soft delete); xodim o'chira olmaydi */
   async deleteCash(user: UserReq, id: number) {
     const cash = await this.findVisibleCash(user, id);
-    const allowed =
-      isAdmin(user.role) ||
-      (user.role === 'EMPLOYEE' &&
-        cash.user?.id === user.id &&
-        ['draft', 'cancelled'].includes(cash.status));
-    if (!allowed) {
-      throw new ForbiddenException(
-        "Xodim faqat o'zining qoralama yoki bekor qilingan kassasini o'chira oladi",
-      );
+    if (!isAdmin(user.role)) {
+      throw new ForbiddenException('Kassani faqat rahbar o‘chira oladi');
     }
 
     await this.cashRepository.update(

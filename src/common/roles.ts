@@ -25,6 +25,13 @@ export function requireManager(user: UserReq) {
   if (!canViewAll(user.role)) throw new ForbiddenException('Ruxsat yo‘q');
 }
 
+/** Mijozlar: rahbar va buxgalter hammasini, xodim faqat o'z kassalaridagi mijozlarni ko'radi */
+export function requireClientsAccess(user: UserReq) {
+  if (!canViewAll(user.role) && user.role !== 'EMPLOYEE') {
+    throw new ForbiddenException('Ruxsat yo‘q');
+  }
+}
+
 export function requireCashWriter(user: UserReq) {
   if (!canWriteCash(user.role)) throw new ForbiddenException('Ruxsat yo‘q');
 }
