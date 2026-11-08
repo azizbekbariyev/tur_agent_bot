@@ -7,6 +7,7 @@ import { User } from './models/user';
 import { Repository } from 'typeorm';
 import { Client } from './models/client';
 import { frontendUrl } from '../common/roles';
+import { botEnabled } from '../common/flags';
 
 const BOT_INFO_TTL = 10 * 60 * 1000;
 
@@ -81,6 +82,7 @@ export class BotService {
     message: string,
     extra?: MessageExtra,
   ) {
+    this.assertEnabled();
     return this.bot.telegram.sendMessage(chatId, message, extra);
   }
 
@@ -90,6 +92,7 @@ export class BotService {
     filename: string,
     caption?: string,
   ) {
+    this.assertEnabled();
     return this.bot.telegram.sendDocument(
       chatId,
       { source, filename },
@@ -97,8 +100,16 @@ export class BotService {
     );
   }
 
+  /** BOT_ENABLED=false (test nusxa): Telegram'ga hech narsa yuborilmaydi, chaqiruvchi xato oladi */
+  private assertEnabled() {
+    if (!botEnabled()) {
+      throw new Error("Telegram bot o'chirilgan (BOT_ENABLED=false)");
+    }
+  }
+
   /** Bot ulanganmi (token to'g'ri va Telegram javob beryaptimi) */
   async getBotUsername(): Promise<string | null> {
+    if (!botEnabled()) return null;
     if (this.botInfo && Date.now() - this.botInfo.at < BOT_INFO_TTL) {
       return this.botInfo.username;
     }

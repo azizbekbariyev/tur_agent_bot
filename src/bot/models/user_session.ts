@@ -65,4 +65,9 @@ export class UserSession {
 
   @Column({ type: 'varchar', length: 64, nullable: true })
   ip!: string | null;
+
+  // Login serveri orqali kirilgan bo'lsa: u yerdagi sessiya id (back-channel logout uchun).
+  // Migratsiya: SessionOidcSid1762700000000
+  @Column({ name: 'oidc_sid', type: 'varchar', length: 128, nullable: true })
+  oidcSid!: string | null;
 }

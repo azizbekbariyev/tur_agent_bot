@@ -16,6 +16,7 @@ import {
   Repository,
   SelectQueryBuilder,
 } from 'typeorm';
+import { scheduledJobsEnabled } from '../common/flags';
 import * as bcrypt from 'bcrypt';
 import { Cash } from 'src/bot/models/cash';
 import { Service } from 'src/bot/models/service';
@@ -1770,6 +1771,7 @@ export class CashService {
   /** Qaytish sanasi o'tgan tasdiqlangan kassalarni avtomatik yopadi */
   @Cron('0 6 * * *', { timeZone: 'Asia/Tashkent' })
   async checkBaseCash() {
+    if (!scheduledJobsEnabled()) return; // test nusxa
     const today = tashkentDate(new Date());
     const candidates = await this.cashRepository.find({
       where: { status: 'approved', isDeleted: false },

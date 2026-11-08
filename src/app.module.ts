@@ -17,6 +17,9 @@ import { BruttoRateNumeric1761955200000 } from './migrations/1761955200000-Brutt
 import { TimestampsWithTimeZone1761955300000 } from './migrations/1761955300000-TimestampsWithTimeZone';
 import { CashSeqNo1761955400000 } from './migrations/1761955400000-CashSeqNo';
 import { UserUsername1762600000000 } from './migrations/1762600000000-UserUsername';
+import { SessionOidcSid1762700000000 } from './migrations/1762700000000-SessionOidcSid';
+import { botEnabled } from './common/flags';
+import { HealthController } from './health.controller';
 
 @Module({
   imports: [
@@ -29,6 +32,8 @@ import { UserUsername1762600000000 } from './migrations/1762600000000-UserUserna
         token: process.env.BOT_TOKEN!,
         middlewares: [session()],
         include: [],
+        // BOT_ENABLED=false (test nusxa): polling boshlanmaydi
+        ...(botEnabled() ? {} : { launchOptions: false as const }),
       }),
     }),
     TypeOrmModule.forRoot({
@@ -45,6 +50,7 @@ import { UserUsername1762600000000 } from './migrations/1762600000000-UserUserna
         TimestampsWithTimeZone1761955300000,
         CashSeqNo1761955400000,
         UserUsername1762600000000,
+        SessionOidcSid1762700000000,
       ],
       migrationsRun: true,
       synchronize: true,
@@ -61,7 +67,7 @@ import { UserUsername1762600000000 } from './migrations/1762600000000-UserUserna
     ClientsModule,
     ReportsModule,
   ],
-  controllers: [],
+  controllers: [HealthController],
   providers: [],
 })
 export class AppModule {}

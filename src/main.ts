@@ -21,6 +21,14 @@ async function start() {
       'https://kakos-bot-two.travance.uz',
       'https://kakos-two.travance.uz',
     ];
+    // Filial o'z sayti (FRONTEND_URL) - test nusxalar (test-one / test-two) uchun.
+    // Production'da bu manzil ro'yxatda allaqachon bor, hech narsa o'zgarmaydi.
+    const ownOrigin = process.env.FRONTEND_URL
+      ? new URL(process.env.FRONTEND_URL).origin
+      : null;
+    if (ownOrigin && !allowedOrigins.includes(ownOrigin)) {
+      allowedOrigins.push(ownOrigin);
+    }
 
     app.enableCors({
       origin: (origin, callback) => {

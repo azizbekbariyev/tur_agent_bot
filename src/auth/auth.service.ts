@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   Logger,
   UnauthorizedException,
@@ -18,6 +19,7 @@ import { frontendUrl } from '../common/roles';
 import { UserSession } from '../bot/models/user_session';
 import { hashToken, isSessionActive, revokeUserSessions } from './sessions';
 import { normalizeUsername } from '../common/username';
+import { localLoginEnabled } from '../common/flags';
 
 const ACCESS_COOKIE_MAX_AGE = 15 * 60 * 1000; // 15 daqiqa
 const REFRESH_COOKIE_MAX_AGE = 7 * 24 * 60 * 60 * 1000; // 7 kun
@@ -159,6 +161,12 @@ export class AuthService {
     req: Request,
     res: Response,
   ) {
+    // LOCAL_LOGIN_ENABLED=false - faqat login serveri orqali (5-bosqich)
+    if (!localLoginEnabled()) {
+      throw new ForbiddenException(
+        'Bu usul o\'chirilgan. "Travance orqali kirish" tugmasidan foydalaning',
+      );
+    }
     const user = await this.findByLogin(dto.login ?? dto.email ?? '');
 
     const validPassword =
@@ -168,6 +176,24 @@ export class AuthService {
     if (!user || !validPassword) {
       throw new UnauthorizedException("Login yoki parol noto'g'ri");
     }
+    this.assertActive(user);
+
+    await this.openSession(user, req, res);
+    return {
+      role: user.type,
+    };
+  }
+
+  /**
+   * Yangi sessiya: user_session qatori + cookie'lar. Eski kirish va login serveri orqali
+   * kirish uchun bir xil (oidcSid - login serveridagi sessiya id, back-channel logout uchun).
+   */
+  async openSession(
+    user: User,
+    req: Request,
+    res: Response,
+    oidcSid: string | null = null,
+  ) {
     this.assertActive(user);
 
     // Eski, muddati ancha oldin tugagan sessiyalar to'planib qolmasin
@@ -185,12 +211,10 @@ export class AuthService {
       expiresAt: refreshExpiresAt,
       userAgent: (req.headers['user-agent'] ?? '').slice(0, 300) || null,
       ip: (req.ip ?? '').slice(0, 64) || null,
+      oidcSid,
     });
     this.setAuthCookies(res, accessToken, refreshToken);
-
-    return {
-      role: user.type,
-    };
+    return sid;
   }
 
   /**
@@ -269,14 +293,20 @@ export class AuthService {
   /** Joriy sessiyani bekor qiladi va cookie'larni o'chiradi */
   async logout(req: Request, res: Response) {
     const sid = await this.sessionIdFromCookies(req);
+    let viaLoginServer = false;
     if (sid) {
+      const session = await this.sessionRepository.findOne({
+        where: { id: sid },
+      });
+      viaLoginServer = !!session?.oidcSid;
       await this.sessionRepository.update(
         { id: sid },
         { revokedAt: new Date() },
       );
     }
     this.clearAuthCookies(res);
-    return { success: true };
+    // Login serveri orqali kirgan bo'lsa, frontend u yerdan ham chiqaradi (umumiy kompyuterlar uchun)
+    return { success: true, ssoLogout: viaLoginServer };
   }
 
   /** Refresh yoki access cookie'dagi sessiya id (imzo tekshiriladi, muddati tugagan bo'lsa ham) */

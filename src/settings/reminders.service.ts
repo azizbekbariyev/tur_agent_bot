@@ -11,6 +11,7 @@ import { daysBetween, tashkentDate, tashkentTime } from '../common/date';
 import { frontendUrl, roleSection } from '../common/roles';
 import { INACTIVE_STATUSES, cashLabel, getDebt } from '../cash/cash.utils';
 import { AppSettings, SettingsService } from './settings.service';
+import { scheduledJobsEnabled } from '../common/flags';
 
 const UPCOMING_DAYS = 7;
 
@@ -48,6 +49,7 @@ export class RemindersService {
   // Har daqiqada vaqtni tekshiradi - vaqt sozlamalardan o'zgarishi mumkin
   @Cron('0 * * * * *')
   async tick() {
+    if (!scheduledJobsEnabled()) return; // test nusxa
     if (this.running) return;
     try {
       const settings = await this.settingsService.get();
