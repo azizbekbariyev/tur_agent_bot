@@ -483,6 +483,11 @@ export class CreateUserDto {
   @IsEmail()
   email!: string;
 
+  // Kirish uchun; kichik harflarga o'tkaziladi va tekshiriladi (common/username.ts)
+  @IsOptional()
+  @IsString()
+  username?: string;
+
   @IsString()
   @MinLength(6)
   password!: string;
@@ -518,6 +523,11 @@ export class UpdateUserDto {
   @IsOptional()
   @IsEmail()
   email?: string;
+
+  // Bo'sh qator - username olib tashlanadi
+  @IsOptional()
+  @IsString()
+  username?: string;
 
   @IsOptional()
   @IsString()

@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { User } from 'src/bot/models/user';
 import { In, Repository } from 'typeorm';
 import * as bcrypt from 'bcrypt';
+import { USER_INDEX_SQL } from '../common/username';
 
 @Injectable()
 export class UserService implements OnModuleInit {
@@ -18,6 +19,9 @@ export class UserService implements OnModuleInit {
    * Avvalgi ochiq `GET /user/create` endpoint'i o'rniga.
    */
   async onModuleInit() {
+    // Yangi bazada migratsiya o'tkazib yuboriladi (jadval hali yo'q edi) - username indekslari shu yerda
+    for (const sql of USER_INDEX_SQL) await this.userRepository.query(sql);
+
     const email = process.env.INITIAL_ADMIN_EMAIL;
     const password = process.env.INITIAL_ADMIN_PASSWORD;
     if (!email || !password) return;

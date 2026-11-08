@@ -30,6 +30,7 @@ import { Brutto } from '../bot/models/brutto';
 import { CashStatusHistory } from '../bot/models/cash_status_history';
 import { UserSession } from '../bot/models/user_session';
 import { revokeUserSessions } from '../auth/sessions';
+import { isValidUsername, normalizeUsername } from '../common/username';
 import { CashNotificationService } from './cash-notification.service';
 import { SettingsService } from '../settings/settings.service';
 import { linkPassengersToClients } from '../clients/client-link';
@@ -1855,16 +1856,38 @@ export class CashService {
     if (exists) throw new ConflictException('Bu email band');
   }
 
+  /** Username: kichik harfga o'tkaziladi, qoida va noyoblik tekshiriladi. "" - olib tashlash (null) */
+  private async prepareUsername(raw: string, excludeId?: number) {
+    const username = normalizeUsername(raw);
+    if (!username) return null;
+    if (!isValidUsername(username)) {
+      throw new BadRequestException(
+        'Username: lotin harflari, raqamlar, _ va . (3-30 belgi)',
+      );
+    }
+    const qb = this.userRepository
+      .createQueryBuilder('u')
+      .where('lower(u.username) = :username', { username });
+    if (excludeId) qb.andWhere('u.id <> :excludeId', { excludeId });
+    // O'chirilgan foydalanuvchining username'i ham band (bazadagi unique index ham shunday)
+    if (await qb.getExists()) throw new ConflictException('Bu username band');
+    return username;
+  }
+
   async createUser(actor: UserReq, body: CreateUserDto) {
     requireAdmin(actor);
     this.assertCanManage(actor, body.type);
     await this.assertEmailFree(body.email);
+    const username = body.username
+      ? await this.prepareUsername(body.username)
+      : null;
 
     const saved = await this.userRepository.save({
       firstName: body.firstName,
       lastName: body.lastName,
       hashedPassword: await bcrypt.hash(body.password, 10),
       email: body.email,
+      username,
       type: body.type,
       status: body.status !== UserStatus.INACTIVE,
       telegramId: body.telegramId,
@@ -1887,10 +1910,11 @@ export class CashService {
         body.type !== undefined ||
         body.status !== undefined ||
         body.password !== undefined ||
-        body.monthlyTarget !== undefined
+        body.monthlyTarget !== undefined ||
+        body.username !== undefined
       ) {
         throw new ForbiddenException(
-          'O‘zingizning rolingiz, holatingiz, maqsadingiz yoki parolingizni bu yerda o‘zgartira olmaysiz',
+          'O‘zingizning rolingiz, holatingiz, maqsadingiz, username yoki parolingizni bu yerda o‘zgartira olmaysiz',
         );
       }
     } else {
@@ -1913,6 +1937,10 @@ export class CashService {
     if (body.email !== undefined && body.email !== target.email) {
       await this.assertEmailFree(body.email, id);
       patch.email = body.email;
+    }
+    if (body.username !== undefined) {
+      const username = await this.prepareUsername(body.username, id);
+      if (username !== target.username) patch.username = username;
     }
     if (body.password?.trim()) {
       patch.hashedPassword = await bcrypt.hash(body.password, 10);

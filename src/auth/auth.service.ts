@@ -17,6 +17,7 @@ import { BotService } from '../bot/bot.service';
 import { frontendUrl } from '../common/roles';
 import { UserSession } from '../bot/models/user_session';
 import { hashToken, isSessionActive, revokeUserSessions } from './sessions';
+import { normalizeUsername } from '../common/username';
 
 const ACCESS_COOKIE_MAX_AGE = 15 * 60 * 1000; // 15 daqiqa
 const REFRESH_COOKIE_MAX_AGE = 7 * 24 * 60 * 60 * 1000; // 7 kun
@@ -52,11 +53,18 @@ export class AuthService {
   }
 
   /** Hashlangan parol bilan (oddiy so'rovlarda u select qilinmaydi) */
-  private findWithPassword(where: { email?: string; id?: number }) {
+  private findWithPassword(where: {
+    email?: string;
+    username?: string;
+    id?: number;
+  }) {
     const qb = this.userRepository
       .createQueryBuilder('u')
       .addSelect('u.hashedPassword');
     if (where.email) qb.where('u.email = :email', { email: where.email });
+    if (where.username) {
+      qb.where('lower(u.username) = :username', { username: where.username });
+    }
     if (where.id) qb.where('u.id = :id', { id: where.id });
     return qb.getOne();
   }
@@ -136,19 +144,29 @@ export class AuthService {
     return { ...user, type: user.type, role: user.type, active: user.status };
   }
 
+  /** "@" bilan boshlanmasa va ichida "@" bo'lsa - email, aks holda username (harf o'lchami muhim emas) */
+  private findByLogin(raw: string) {
+    const value = raw.trim();
+    if (!value) return null;
+    if (!value.startsWith('@') && value.includes('@')) {
+      return this.findWithPassword({ email: value });
+    }
+    return this.findWithPassword({ username: normalizeUsername(value) });
+  }
+
   async loginEmailPassword(
-    dto: { email: string; password: string },
+    dto: { login?: string; email?: string; password: string },
     req: Request,
     res: Response,
   ) {
-    const user = await this.findWithPassword({ email: dto.email });
+    const user = await this.findByLogin(dto.login ?? dto.email ?? '');
 
     const validPassword =
       !!user?.hashedPassword &&
       (await bcrypt.compare(dto.password, user.hashedPassword));
 
     if (!user || !validPassword) {
-      throw new UnauthorizedException("Email yoki password noto'g'ri");
+      throw new UnauthorizedException("Login yoki parol noto'g'ri");
     }
     this.assertActive(user);
 

@@ -16,6 +16,7 @@ import { ReportsModule } from './reports/reports.module';
 import { BruttoRateNumeric1761955200000 } from './migrations/1761955200000-BruttoRateNumeric';
 import { TimestampsWithTimeZone1761955300000 } from './migrations/1761955300000-TimestampsWithTimeZone';
 import { CashSeqNo1761955400000 } from './migrations/1761955400000-CashSeqNo';
+import { UserUsername1762600000000 } from './migrations/1762600000000-UserUsername';
 
 @Module({
   imports: [
@@ -43,6 +44,7 @@ import { CashSeqNo1761955400000 } from './migrations/1761955400000-CashSeqNo';
         BruttoRateNumeric1761955200000,
         TimestampsWithTimeZone1761955300000,
         CashSeqNo1761955400000,
+        UserUsername1762600000000,
       ],
       migrationsRun: true,
       synchronize: true,

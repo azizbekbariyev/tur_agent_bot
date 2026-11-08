@@ -1,6 +1,7 @@
 import {
   Column,
   Entity,
+  Index,
   JoinColumn,
   ManyToOne,
   OneToMany,
@@ -10,6 +11,11 @@ import { Cash } from './cash';
 import { History } from './history';
 import { Notification } from './notification';
 
+// Unique indekslar migratsiyada qo'lda yaratiladi (lower(username) - TypeORM ifodali indeksni bilmaydi):
+// UQ_user_username_lower ON (lower(username)), UQ_user_account_id ON (account_id).
+// synchronize: false - synchronize ularni yaratmaydi ham, o'chirmaydi ham
+@Index('UQ_user_username_lower', { synchronize: false })
+@Index('UQ_user_account_id', { synchronize: false })
 @Entity('user')
 export class User {
   @PrimaryGeneratedColumn()
@@ -29,6 +35,14 @@ export class User {
     nullable: true,
   })
   email?: string;
+
+  // Kirish uchun, kichik harflarda (common/username.ts). Migratsiya: UserUsername1762600000000
+  @Column({ type: 'varchar', length: 30, nullable: true })
+  username!: string | null;
+
+  // Login serveridagi akkaunt (keyingi bosqichda bog'lanadi)
+  @Column({ name: 'account_id', type: 'varchar', length: 64, nullable: true })
+  accountId!: string | null;
 
   @Column({ name: 'hashed_password', default: '', select: false })
   hashedPassword!: string;

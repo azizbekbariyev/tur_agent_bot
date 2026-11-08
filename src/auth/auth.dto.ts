@@ -1,8 +1,14 @@
-import { IsEmail, IsString, MinLength } from 'class-validator';
+import { IsEmail, IsOptional, IsString, MinLength } from 'class-validator';
 
+/** Kirish: email yoki username. Eski frontend `email` yuboradi, yangisi - `login` */
 export class LoginDto {
-  @IsEmail()
-  email!: string;
+  @IsOptional()
+  @IsString()
+  login?: string;
+
+  @IsOptional()
+  @IsString()
+  email?: string;
 
   @IsString()
   @MinLength(1)
