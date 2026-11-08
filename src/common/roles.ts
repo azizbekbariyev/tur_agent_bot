@@ -16,6 +16,20 @@ export const canViewAll = (role?: string) =>
 export const canWriteCash = (role?: string) =>
   isAdmin(role) || role === 'EMPLOYEE';
 
+/**
+ * Kim kimni boshqaradi (qo'shish, tahrirlash, bloklash, o'chirish, parolini tiklash):
+ * SUPERADMIN - ADMIN, ACCOUNTANT va EMPLOYEE; ADMIN - faqat EMPLOYEE.
+ * SUPERADMIN'ni filial panelidan hech kim yaratmaydi (faqat Travance).
+ */
+export function manageableRoles(role?: string): AppRole[] {
+  if (role === 'SUPERADMIN') return ['ADMIN', 'ACCOUNTANT', 'EMPLOYEE'];
+  if (role === 'ADMIN') return ['EMPLOYEE'];
+  return [];
+}
+
+export const canManageRole = (actorRole?: string, targetRole?: string) =>
+  manageableRoles(actorRole).includes(targetRole as AppRole);
+
 export function requireAdmin(user: UserReq) {
   if (!isAdmin(user.role)) throw new ForbiddenException('Ruxsat yo‘q');
 }

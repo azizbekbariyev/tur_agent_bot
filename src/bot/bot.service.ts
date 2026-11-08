@@ -2,10 +2,9 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { InjectBot } from 'nestjs-telegraf';
 import { BOT_NAME } from 'src/app.constants';
-import { Context, Markup, Telegraf } from 'telegraf';
+import { Context, Telegraf } from 'telegraf';
 import { User } from './models/user';
 import { Repository } from 'typeorm';
-import { JwtService } from '@nestjs/jwt';
 import { Client } from './models/client';
 import { frontendUrl } from '../common/roles';
 
@@ -23,7 +22,6 @@ export class BotService {
     @InjectRepository(User) private readonly userRepository: Repository<User>,
     @InjectRepository(Client)
     private readonly clientRepository: Repository<Client>,
-    private readonly jwtService: JwtService,
   ) {}
 
   async start(ctx: Context) {
@@ -40,17 +38,11 @@ export class BotService {
         );
         return;
       }
-      const token = await this.generateToken({
-        telegramId: user.telegramId!,
-        type: user.type,
-        id: user.id,
-      });
+      // Bot faqat eslatmalar uchun: kirish tokeni yoki Mini App yo'q, saytga oddiy kirish orqali
       const url = frontendUrl();
       await ctx.reply(
-        `Hurmatli foydalanuvchi, xizmatlardan foydalanish uchun quyidagi tugmani bosing.\n\n${url}/?token=${token}`,
-        Markup.inlineKeyboard([
-          Markup.button.webApp('🚀 Mini Appni ochish', `${url}/login`),
-        ]),
+        `Assalomu alaykum, ${user.firstName}! Siz botga ulangansiz: kassa eslatmalari va xabarlar shu yerga keladi.` +
+          (url ? `\n\nTizimga kirish: ${url}` : ''),
       );
       return;
     }
@@ -82,15 +74,6 @@ export class BotService {
       { telegramChatId: String(ctx.chat?.id ?? ctx.from.id) },
     );
     return true;
-  }
-
-  async generateToken(user: { telegramId: number; type: string; id: number }) {
-    const secret = process.env.JWT_SECRET;
-    if (!secret) throw new Error('JWT_SECRET sozlanmagan');
-    return this.jwtService.signAsync(
-      { telegramId: user.telegramId, role: user.type, id: user.id },
-      { secret, expiresIn: 86400 },
-    );
   }
 
   public sendMessage(

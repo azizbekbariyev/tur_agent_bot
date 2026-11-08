@@ -15,6 +15,7 @@ import { CashServices } from '../bot/models/cash_services';
 import { ServiceType } from '../bot/models/service_type';
 import { Brutto } from '../bot/models/brutto';
 import { CashStatusHistory } from '../bot/models/cash_status_history';
+import { UserSession } from '../bot/models/user_session';
 import { CashNotificationService } from './cash-notification.service';
 import { VoucherService } from './voucher.service';
 import { SettingsModule } from '../settings/settings.module';
@@ -33,6 +34,7 @@ import { SettingsModule } from '../settings/settings.module';
       Brutto,
       CashServices,
       CashStatusHistory,
+      UserSession,
     ]),
     BotModule,
     SettingsModule,

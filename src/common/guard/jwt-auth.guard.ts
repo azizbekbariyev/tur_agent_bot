@@ -9,7 +9,8 @@ import { ConfigService } from '@nestjs/config';
 import { Request } from 'express';
 import { DataSource } from 'typeorm';
 import { UserToken } from 'src/types/token.type';
-import { User } from '../../bot/models/user';
+import { UserSession } from '../../bot/models/user_session';
+import { isSessionActive } from '../../auth/sessions';
 
 @Injectable()
 export class JwtAuthGuard implements CanActivate {
@@ -21,10 +22,13 @@ export class JwtAuthGuard implements CanActivate {
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const req: Request = context.switchToHttp().getRequest();
-    const { token, secretKey } = this.extractToken(req);
+
+    // Faqat web cookie. Telegram mini app uchun Bearer token olib tashlangan (bot faqat eslatmalar uchun).
+    const token = req.cookies?.['access_token'] as string | undefined;
+    if (!token) throw new UnauthorizedException({ message: 'Token topilmadi' });
 
     // .env da kalit bo'lmasa bu "token yaroqsiz" emas, konfiguratsiya xatosi bo'lib chiqsin
-    const secret = this.configService.getOrThrow<string>(secretKey);
+    const secret = this.configService.getOrThrow<string>('ACCESS_TOKEN_KEY');
 
     let payload: UserToken;
     try {
@@ -35,20 +39,28 @@ export class JwtAuthGuard implements CanActivate {
       });
     }
 
-    if (!payload.id) {
+    if (!payload.id || !payload.sid) {
       throw new UnauthorizedException({
         message: 'Token ichida foydalanuvchi aniqlanmadi',
       });
     }
 
-    // O'chirilgan/bloklangan foydalanuvchi token muddati tugaguncha ishlab yurmasin.
-    // Rol ham bazadan olinadi - admin rolni o'zgartirsa darhol kuchga kiradi.
-    const user = await this.dataSource
-      .getRepository(User)
-      .findOne({ where: { id: payload.id } });
-    if (!user || user.isDeleted || !user.status) {
+    // Sessiya bekor qilingan bo'lsa ("Chiqish", bloklash, parol almashtirish) token ishlamaydi.
+    // O'chirilgan/bloklangan foydalanuvchi ham darhol to'xtatiladi; rol bazadan olinadi.
+    const session = await this.dataSource.getRepository(UserSession).findOne({
+      where: { id: payload.sid },
+      relations: { user: true },
+    });
+    const user = session?.user;
+    if (
+      !isSessionActive(session) ||
+      !user ||
+      user.id !== payload.id ||
+      user.isDeleted ||
+      !user.status
+    ) {
       throw new UnauthorizedException({
-        message: 'Foydalanuvchi topilmadi yoki bloklangan',
+        message: 'Sessiya tugagan yoki foydalanuvchi bloklangan',
       });
     }
 
@@ -56,22 +68,8 @@ export class JwtAuthGuard implements CanActivate {
       id: user.id,
       role: user.type,
       telegram_id: user.telegramId,
+      sid: payload.sid,
     };
     return true;
-  }
-
-  // Web: cookie (ACCESS_TOKEN_KEY). Mini app: "Authorization: Bearer <jwt>" (JWT_SECRET).
-  private extractToken(req: Request): { token: string; secretKey: string } {
-    const cookieToken = req.cookies?.['access_token'] as string | undefined;
-    if (cookieToken)
-      return { token: cookieToken, secretKey: 'ACCESS_TOKEN_KEY' };
-
-    const [scheme, bearerToken] = (req.headers['authorization'] ?? '').split(
-      ' ',
-    );
-    if (scheme === 'Bearer' && bearerToken)
-      return { token: bearerToken, secretKey: 'JWT_SECRET' };
-
-    throw new UnauthorizedException({ message: 'Token topilmadi' });
   }
 }

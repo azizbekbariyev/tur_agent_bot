@@ -6,19 +6,25 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { User } from 'src/bot/models/user';
-import { Repository } from 'typeorm';
+import { LessThan, Repository } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { UserToken } from 'src/types/token.type';
 import * as bcrypt from 'bcrypt';
 import { type Request, type Response } from 'express';
-import { createHash } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import { BotService } from '../bot/bot.service';
 import { frontendUrl } from '../common/roles';
+import { UserSession } from '../bot/models/user_session';
+import { hashToken, isSessionActive, revokeUserSessions } from './sessions';
 
 const ACCESS_COOKIE_MAX_AGE = 15 * 60 * 1000; // 15 daqiqa
 const REFRESH_COOKIE_MAX_AGE = 7 * 24 * 60 * 60 * 1000; // 7 kun
 const RESET_TOKEN_TTL = 30 * 60; // 30 daqiqa, soniyada
+// Bir nechta tab bir vaqtda refresh qilsa, oldingi refresh token shuncha vaqt qabul qilinadi
+const REFRESH_GRACE_MS = 60 * 1000;
+// Muddati shundan oldin tugagan sessiyalar bazadan tozalanadi
+const SESSION_CLEANUP_MS = 30 * 24 * 60 * 60 * 1000;
 
 /** Parol o'zgarsa tiklash havolasi yaroqsiz bo'ladi (bir martalik) */
 const passwordStamp = (hash: string) =>
@@ -31,6 +37,8 @@ export class AuthService {
   constructor(
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
+    @InjectRepository(UserSession)
+    private readonly sessionRepository: Repository<UserSession>,
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
     private readonly botService: BotService,
@@ -61,59 +69,54 @@ export class AuthService {
     }
   }
 
+  private cookieOptions() {
+    const isProd = this.configService.get('NODE_ENV') === 'production';
+    return { httpOnly: true, secure: isProd, sameSite: 'strict' as const };
+  }
+
   private setAuthCookies(
     res: Response,
     accessToken: string,
     refreshToken: string,
   ) {
-    const isProd = this.configService.get('NODE_ENV') === 'production';
-
     res.cookie('access_token', accessToken, {
+      ...this.cookieOptions(),
       maxAge:
         Number(this.configService.get('ACCESS_TOKEN_TIME')) ||
         ACCESS_COOKIE_MAX_AGE,
-      httpOnly: true,
-      secure: isProd,
-      sameSite: 'strict',
     });
 
     res.cookie('refresh_token', refreshToken, {
+      ...this.cookieOptions(),
       maxAge:
         Number(this.configService.get('REFRESH_TOKEN_TIME')) ||
         REFRESH_COOKIE_MAX_AGE,
-      httpOnly: true,
-      secure: isProd,
-      sameSite: 'strict',
     });
   }
 
-  async validate(req: Request) {
-    // 1) Web: cookie'dagi JWT
-    const webToken = req.cookies?.['access_token'] as string | undefined;
-    if (webToken) {
-      const payload = await this.verifyToken<{ id: number }>(
-        webToken,
-        this.configService.getOrThrow<string>('ACCESS_TOKEN_KEY'),
-      );
-      return this.findSafeUser(payload.id);
-    }
-
-    // 2) Mini app: "Authorization: Bearer <jwt>" (bot /start da bergan token)
-    const [scheme, botToken] = (req.headers['authorization'] ?? '').split(' ');
-    if (scheme === 'Bearer' && botToken) {
-      const payload = await this.verifyToken<{ id: number }>(
-        botToken,
-        this.configService.getOrThrow<string>('JWT_SECRET'),
-      );
-      return this.findSafeUser(payload.id);
-    }
-
-    throw new UnauthorizedException('Token topilmadi');
+  private clearAuthCookies(res: Response) {
+    res.clearCookie('access_token', this.cookieOptions());
+    res.clearCookie('refresh_token', this.cookieOptions());
   }
 
-  private async findSafeUser(id: number) {
-    const user = await this.userRepository.findOne({ where: { id } });
-    return this.toSafeUser(user);
+  async validate(req: Request) {
+    const token = req.cookies?.['access_token'] as string | undefined;
+    if (!token) throw new UnauthorizedException('Token topilmadi');
+
+    const payload = await this.verifyToken<UserToken>(
+      token,
+      this.configService.getOrThrow<string>('ACCESS_TOKEN_KEY'),
+    );
+    const session = payload.sid
+      ? await this.sessionRepository.findOne({
+          where: { id: payload.sid },
+          relations: { user: true },
+        })
+      : null;
+    if (!isSessionActive(session) || session!.user?.id !== payload.id) {
+      throw new UnauthorizedException('Sessiya tugagan');
+    }
+    return this.toSafeUser(session!.user);
   }
 
   private async verifyToken<T extends object>(
@@ -135,6 +138,7 @@ export class AuthService {
 
   async loginEmailPassword(
     dto: { email: string; password: string },
+    req: Request,
     res: Response,
   ) {
     const user = await this.findWithPassword({ email: dto.email });
@@ -148,7 +152,22 @@ export class AuthService {
     }
     this.assertActive(user);
 
-    const { accessToken, refreshToken } = await this.generateTokenUser(user);
+    // Eski, muddati ancha oldin tugagan sessiyalar to'planib qolmasin
+    await this.sessionRepository.delete({
+      expiresAt: LessThan(new Date(Date.now() - SESSION_CLEANUP_MS)),
+    });
+
+    const sid = randomUUID();
+    const { accessToken, refreshToken, refreshExpiresAt } =
+      await this.generateTokenUser(user, sid);
+    await this.sessionRepository.insert({
+      id: sid,
+      user: { id: user.id },
+      refreshHash: hashToken(refreshToken),
+      expiresAt: refreshExpiresAt,
+      userAgent: (req.headers['user-agent'] ?? '').slice(0, 300) || null,
+      ip: (req.ip ?? '').slice(0, 64) || null,
+    });
     this.setAuthCookies(res, accessToken, refreshToken);
 
     return {
@@ -156,6 +175,11 @@ export class AuthService {
     };
   }
 
+  /**
+   * Refresh token har safar almashtiriladi (rotation). Eski token qayta ishlatilsa
+   * (o'g'irlangan bo'lishi mumkin) - sessiya bekor qilinadi. Faqat bir nechta tab
+   * bir vaqtda yangilagan holat uchun oldingi token REFRESH_GRACE_MS davomida qabul qilinadi.
+   */
   async refreshTokens(req: Request, res: Response) {
     const refreshToken = req.cookies?.['refresh_token'] as string | undefined;
 
@@ -174,22 +198,89 @@ export class AuthService {
       );
     }
 
-    const user = await this.userRepository.findOne({
-      where: { id: payload.id },
-    });
+    const session = payload.sid
+      ? await this.sessionRepository.findOne({
+          where: { id: payload.sid },
+          relations: { user: true },
+        })
+      : null;
+    if (!isSessionActive(session) || session!.user?.id !== payload.id) {
+      throw new UnauthorizedException('Sessiya tugagan, qayta kiring');
+    }
+    const s = session!;
+
+    const hash = hashToken(refreshToken);
+    const inGrace =
+      hash === s.prevRefreshHash &&
+      !!s.rotatedAt &&
+      Date.now() - s.rotatedAt.getTime() < REFRESH_GRACE_MS;
+    if (hash !== s.refreshHash && !inGrace) {
+      await this.sessionRepository.update(
+        { id: s.id },
+        { revokedAt: new Date() },
+      );
+      this.logger.warn(
+        `Eski refresh token qayta ishlatildi - sessiya bekor qilindi (user ${s.user.id})`,
+      );
+      throw new UnauthorizedException('Sessiya tugagan, qayta kiring');
+    }
+
+    const user = s.user;
     this.assertActive(user);
 
-    const { accessToken, refreshToken: newRefreshToken } =
-      await this.generateTokenUser(user);
+    const {
+      accessToken,
+      refreshToken: newRefreshToken,
+      refreshExpiresAt,
+    } = await this.generateTokenUser(user, s.id);
+    await this.sessionRepository.update(
+      { id: s.id },
+      {
+        refreshHash: hashToken(newRefreshToken),
+        prevRefreshHash: s.refreshHash,
+        rotatedAt: new Date(),
+        lastUsedAt: new Date(),
+        expiresAt: refreshExpiresAt,
+      },
+    );
     this.setAuthCookies(res, accessToken, newRefreshToken);
 
     return { role: user.type };
   }
 
-  logout(res: Response) {
-    res.clearCookie('access_token');
-    res.clearCookie('refresh_token');
+  /** Joriy sessiyani bekor qiladi va cookie'larni o'chiradi */
+  async logout(req: Request, res: Response) {
+    const sid = await this.sessionIdFromCookies(req);
+    if (sid) {
+      await this.sessionRepository.update(
+        { id: sid },
+        { revokedAt: new Date() },
+      );
+    }
+    this.clearAuthCookies(res);
     return { success: true };
+  }
+
+  /** Refresh yoki access cookie'dagi sessiya id (imzo tekshiriladi, muddati tugagan bo'lsa ham) */
+  private async sessionIdFromCookies(req: Request) {
+    const cookies = req.cookies as Record<string, string | undefined>;
+    const pairs: [string | undefined, string][] = [
+      [cookies?.['refresh_token'], 'REFRESH_TOKEN_KEY'],
+      [cookies?.['access_token'], 'ACCESS_TOKEN_KEY'],
+    ];
+    for (const [token, key] of pairs) {
+      if (!token) continue;
+      try {
+        const payload = await this.jwtService.verifyAsync<UserToken>(token, {
+          secret: this.configService.getOrThrow<string>(key),
+          ignoreExpiration: true,
+        });
+        if (payload.sid) return payload.sid;
+      } catch {
+        // imzosi noto'g'ri - e'tiborsiz
+      }
+    }
+    return null;
   }
 
   /**
@@ -243,27 +334,35 @@ export class AuthService {
       { id: user.id },
       { hashedPassword: await bcrypt.hash(password, 10) },
     );
+    // Parol tiklangach eski kirishlar ishlamasin
+    await revokeUserSessions(this.sessionRepository, user.id);
     return { success: true };
   }
 
-  async generateTokenUser(user: User) {
-    const payload = {
-      id: user.id,
-      email: user.email,
-      role: user.type,
-    };
+  async generateTokenUser(user: User, sid: string) {
+    const payload = { id: user.id, role: user.type, sid };
 
+    // jti: bir soniya ichida yangilansa ham token har safar boshqacha bo'lsin (iat soniyalarda),
+    // aks holda rotation ishlamaydi - yangi token eskisi bilan bir xil chiqadi
     const [accessToken, refreshToken] = await Promise.all([
       this.jwtService.signAsync(payload, {
         secret: this.configService.getOrThrow('ACCESS_TOKEN_KEY'),
         expiresIn: this.configService.getOrThrow('ACCESS_TOKEN_TIME'),
+        jwtid: randomUUID(),
       }),
       this.jwtService.signAsync(payload, {
+        jwtid: randomUUID(),
         secret: this.configService.getOrThrow('REFRESH_TOKEN_KEY'),
         expiresIn: this.configService.getOrThrow('REFRESH_TOKEN_TIME'),
       }),
     ]);
 
-    return { accessToken, refreshToken };
+    // Sessiya muddati = refresh tokenning muddati
+    const { exp } = this.jwtService.decode<{ exp: number }>(refreshToken);
+    return {
+      accessToken,
+      refreshToken,
+      refreshExpiresAt: new Date(exp * 1000),
+    };
   }
 }

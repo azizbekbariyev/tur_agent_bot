@@ -28,11 +28,14 @@ import { UserReq } from 'src/types/user.type';
 import { ServiceType } from '../bot/models/service_type';
 import { Brutto } from '../bot/models/brutto';
 import { CashStatusHistory } from '../bot/models/cash_status_history';
+import { UserSession } from '../bot/models/user_session';
+import { revokeUserSessions } from '../auth/sessions';
 import { CashNotificationService } from './cash-notification.service';
 import { SettingsService } from '../settings/settings.service';
 import { linkPassengersToClients } from '../clients/client-link';
 import { findOrCreatePartner } from '../partners/partners.service';
 import {
+  canManageRole,
   canViewAll,
   isAdmin,
   requireAdmin,
@@ -191,6 +194,18 @@ const parseCashDate = (value: string) =>
     ? tashkentMidnight(value.trim())
     : new Date(value);
 
+/** Kassa sanasi bugundan (Toshkent) keyin bo'lmasin - aks holda panel ro'yxatlari va hisobotlarda ko'rinmay qoladi */
+function assertNotFutureCashDate(date: Date) {
+  if (Number.isNaN(date.getTime())) {
+    throw new BadRequestException('Kassa sanasi noto‘g‘ri');
+  }
+  if (tashkentDate(date) > tashkentDate(new Date())) {
+    throw new BadRequestException(
+      'Kassa sanasi bugundan keyin bo‘lishi mumkin emas',
+    );
+  }
+}
+
 const byId = <T extends { id: number }>(a: T, b: T) => a.id - b.id;
 
 const passengerText = (p: {
@@ -226,6 +241,8 @@ export class CashService {
     @InjectRepository(User) private readonly userRepository: Repository<User>,
     @InjectRepository(CashStatusHistory)
     private readonly statusHistoryRepository: Repository<CashStatusHistory>,
+    @InjectRepository(UserSession)
+    private readonly sessionRepository: Repository<UserSession>,
     private readonly dataSource: DataSource,
     @InjectRepository(ServiceType)
     private readonly serviceTypeRepository: Repository<ServiceType>,
@@ -1043,6 +1060,11 @@ export class CashService {
     const cashNumber = body.cash_number?.trim() || '0';
     await this.assertCashNumberFree(cashNumber);
 
+    const createdAt = body.created_at
+      ? parseCashDate(body.created_at)
+      : undefined;
+    if (createdAt) assertNotFutureCashDate(createdAt);
+
     if (body.additional_user_id) {
       if (body.additional_user_id === user.id) {
         throw new BadRequestException(
@@ -1094,9 +1116,7 @@ export class CashService {
         netto: netto.toFixed(2),
         user: { id: user.id },
         brutto: { id: brutto.id },
-        ...(body.created_at
-          ? { created_at: parseCashDate(body.created_at) }
-          : {}),
+        ...(createdAt ? { created_at: createdAt } : {}),
         ...(body.additional_user_id
           ? { additionalUser: { id: body.additional_user_id } }
           : {}),
@@ -1436,6 +1456,13 @@ export class CashService {
       }
       if (body.created_at !== undefined) {
         const createdAt = parseCashDate(body.created_at);
+        // Sana o'zgartirilgandagina tekshiriladi: eski (xato) sanali kassaning boshqa maydonlarini tahrirlash to'xtamasin
+        if (
+          !cash.created_at ||
+          tashkentDate(createdAt) !== tashkentDate(cash.created_at)
+        ) {
+          assertNotFutureCashDate(createdAt);
+        }
         pushHistory(
           'created_at',
           cash.created_at?.toISOString(),
@@ -1810,13 +1837,14 @@ export class CashService {
     return withRole(me);
   }
 
-  private assertCanManage(actor: UserReq, target?: User | null, type?: string) {
-    // SUPERADMIN'ni faqat SUPERADMIN yaratadi/o'zgartiradi
-    if (
-      actor.role !== 'SUPERADMIN' &&
-      (target?.type === 'SUPERADMIN' || type === 'SUPERADMIN')
-    ) {
-      throw new ForbiddenException('Ruxsat yo‘q');
+  /** Rol qoidasi: ADMIN faqat xodimlarni, SUPERADMIN admin/buxgalter/xodimlarni boshqaradi */
+  private assertCanManage(actor: UserReq, targetRole?: string) {
+    if (!canManageRole(actor.role, targetRole)) {
+      throw new ForbiddenException(
+        actor.role === 'ADMIN'
+          ? 'Admin faqat xodimlarni qo‘sha va boshqara oladi'
+          : 'Ruxsat yo‘q',
+      );
     }
   }
 
@@ -1829,7 +1857,7 @@ export class CashService {
 
   async createUser(actor: UserReq, body: CreateUserDto) {
     requireAdmin(actor);
-    this.assertCanManage(actor, null, body.type);
+    this.assertCanManage(actor, body.type);
     await this.assertEmailFree(body.email);
 
     const saved = await this.userRepository.save({
@@ -1846,21 +1874,29 @@ export class CashService {
   }
 
   async updateUser(actor: UserReq, id: number, body: UpdateUserDto) {
-    requireAdmin(actor);
     const target = await this.userRepository.findOne({
       where: { id, isDeleted: false },
     });
     if (!target) throw new NotFoundException('Foydalanuvchi topilmadi');
-    this.assertCanManage(actor, target, body.type);
 
-    if (
-      id === actor.id &&
-      (body.status === UserStatus.INACTIVE ||
-        (body.type !== undefined && !isAdmin(body.type)))
-    ) {
-      throw new BadRequestException(
-        "O'zingizni bloklay yoki rahbarlikdan chiqara olmaysiz",
-      );
+    const self = id === actor.id;
+    if (self) {
+      // O'z profili (har qanday rol): faqat ism, email, Telegram. Rol, holat va maqsadni
+      // yuqoridagi rol o'zgartiradi; parol - "Parolni o'zgartirish" orqali (joriy parol bilan).
+      if (
+        body.type !== undefined ||
+        body.status !== undefined ||
+        body.password !== undefined ||
+        body.monthlyTarget !== undefined
+      ) {
+        throw new ForbiddenException(
+          'O‘zingizning rolingiz, holatingiz, maqsadingiz yoki parolingizni bu yerda o‘zgartira olmaysiz',
+        );
+      }
+    } else {
+      requireAdmin(actor);
+      this.assertCanManage(actor, target.type);
+      if (body.type !== undefined) this.assertCanManage(actor, body.type);
     }
 
     const patch: Partial<User> = {};
@@ -1885,6 +1921,10 @@ export class CashService {
     if (Object.keys(patch).length) {
       await this.userRepository.update({ id }, patch);
     }
+    // Bloklansa yoki paroli tiklansa - uning barcha kirishlari darhol tugaydi
+    if (patch.status === false || patch.hashedPassword) {
+      await revokeUserSessions(this.sessionRepository, id);
+    }
     return this.getMe({ ...actor, id });
   }
 
@@ -1897,16 +1937,35 @@ export class CashService {
       where: { id, isDeleted: false },
     });
     if (!target) throw new NotFoundException('Foydalanuvchi topilmadi');
-    this.assertCanManage(actor, target);
+    this.assertCanManage(actor, target.type);
     await this.userRepository.update({ id }, { isDeleted: true });
+    await revokeUserSessions(this.sessionRepository, id);
     return { success: true };
   }
 
+  /** O'z parolini almashtirish: joriy parol tekshiriladi, boshqa qurilmalardagi kirishlar tugaydi */
   async changePassword(user: UserReq, body: ChangePasswordDto) {
+    const me = await this.userRepository
+      .createQueryBuilder('u')
+      .addSelect('u.hashedPassword')
+      .where('u.id = :id', { id: user.id })
+      .getOne();
+    const valid =
+      !!me?.hashedPassword &&
+      (await bcrypt.compare(body.currentPassword, me.hashedPassword));
+    // 401 emas: frontend 401 da sessiyani yangilashga urinadi
+    if (!valid) throw new BadRequestException('Joriy parol noto‘g‘ri');
+    if (body.currentPassword === body.password) {
+      throw new BadRequestException(
+        'Yangi parol joriy paroldan farq qilishi kerak',
+      );
+    }
+
     await this.userRepository.update(
       { id: user.id },
       { hashedPassword: await bcrypt.hash(body.password, 10) },
     );
+    await revokeUserSessions(this.sessionRepository, user.id, user.sid);
     return { success: true };
   }
 

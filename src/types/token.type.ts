@@ -1,6 +1,6 @@
 export type UserToken = {
   id: number;
-  email: string;
-  hashed_password: string;
   role: string;
+  // user_session.id - sessiyasiz (eski) token qabul qilinmaydi
+  sid: string;
 };

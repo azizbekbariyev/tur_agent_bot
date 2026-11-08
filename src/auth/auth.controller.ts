@@ -15,9 +15,10 @@ export class AuthController {
   @Post('login')
   loginEmailPassword(
     @Body() body: LoginDto,
+    @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ) {
-    return this.authService.loginEmailPassword(body, res);
+    return this.authService.loginEmailPassword(body, req, res);
   }
 
   @Post('refresh')
@@ -26,8 +27,8 @@ export class AuthController {
   }
 
   @Post('logout')
-  logout(@Res({ passthrough: true }) res: Response) {
-    return this.authService.logout(res);
+  logout(@Req() req: Request, @Res({ passthrough: true }) res: Response) {
+    return this.authService.logout(req, res);
   }
 
   @Post('forgot-password')
