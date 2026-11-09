@@ -44,7 +44,7 @@ export class LoginServerClient {
   }
 
   private async call<T>(
-    method: 'GET' | 'POST' | 'PATCH',
+    method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
     path: string,
     body?: unknown,
   ): Promise<T> {
@@ -79,8 +79,10 @@ export class LoginServerClient {
     this.logger.warn(`Login serveri rad etdi: ${status} ${code ?? ''}`);
     switch (code) {
       case 'username_taken':
+        return new ConflictException('Bu username band');
+      case 'account_blocked':
         return new ConflictException(
-          'Bu username band (boshqa filialda ham bo‘lishi mumkin)',
+          'Xodim superadmin tomonidan barcha filiallarda bloklangan — blokni faqat superadmin ocha oladi',
         );
       case 'multi_branch_account':
         return new ConflictException(
@@ -145,6 +147,15 @@ export class LoginServerClient {
       'PATCH',
       `/accounts/${encodeURIComponent(accountId)}`,
       input,
+    );
+  }
+
+  /** O'chirish: faqat shu filialdagi a'zolik (oxirgisi bo'lsa akkaunt nofaol bo'ladi) */
+  removeMembership(accountId: string, actorAccountId: string) {
+    return this.call<{ ok: true; accountDeactivated: boolean }>(
+      'DELETE',
+      `/accounts/${encodeURIComponent(accountId)}/membership`,
+      { actorAccountId },
     );
   }
 

@@ -52,6 +52,14 @@ export class OidcController {
     return { ok: true };
   }
 
+  /** Login serveri -> filial (server-server): superadmin bloklashi/blokdan chiqarishi, imzolangan */
+  @Post('internal/account-status')
+  @HttpCode(204)
+  @Header('Cache-Control', 'no-store')
+  async accountStatus(@Body() body: { token?: unknown }) {
+    await this.oidc.receiveAccountStatus(body?.token);
+  }
+
   /** Login serveri -> filial (server-server): zaxira kirish uchun bcrypt hash, imzolangan */
   @Post('internal/password-hash')
   @HttpCode(204)

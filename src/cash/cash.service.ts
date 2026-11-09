@@ -2066,14 +2066,15 @@ export class CashService {
     if (!target) throw new NotFoundException('Foydalanuvchi topilmadi');
     this.assertCanManage(actor, target.type);
     if (this.viaLoginServer(target)) {
-      // Login serverida a'zolik o'chiriladi (shu filialga kira olmaydi, sessiyalari yopiladi)
+      // Login serverida faqat shu filialdagi a'zolik olib tashlanadi: boshqa filiallarda kirish
+      // ishlashda davom etadi; oxirgi a'zolik bo'lsa akkaunt nofaol bo'ladi
       const actorAccountId = await this.actorAccountId(actor);
       await this.dataSource.transaction(async (m) => {
         await m.getRepository(User).update({ id }, { isDeleted: true });
-        await this.loginServer.updateAccount(target.accountId!, {
+        await this.loginServer.removeMembership(
+          target.accountId!,
           actorAccountId,
-          status: 'disabled',
-        });
+        );
       });
     } else {
       await this.userRepository.update({ id }, { isDeleted: true });

@@ -31,6 +31,7 @@ const TX_COOKIE = 'oidc_tx';
 const TX_TTL_S = 10 * 60;
 const BACKCHANNEL_EVENT = 'http://schemas.openid.net/event/backchannel-logout';
 const PASSWORD_HASH_TYP = 'pwhash+jwt';
+const ACCOUNT_STATUS_TYP = 'acctstatus+jwt';
 const BCRYPT_RE = /^\$2[aby]\$\d{2}\$[./A-Za-z0-9]{53}$/;
 
 type Discovery = {
@@ -404,6 +405,53 @@ export class OidcService {
         `Back-channel logout (akkaunt): user ${user.id} sessiyalari yopildi`,
       );
     }
+  }
+
+  /**
+   * Akkaunt holati (superadmin barcha filiallarda bloklasa / blokdan chiqarsa): filialdagi
+   * user.status o'zgaradi - zaxira kirish ham yopiladi. Imzolangan server-server so'rovi
+   * (RS256, aud = shu filial, 2 daqiqa, jti bir martalik).
+   */
+  async receiveAccountStatus(token: unknown) {
+    const s = this.require();
+    if (typeof token !== 'string' || !token) {
+      throw new BadRequestException('token kerak');
+    }
+    let payload: JWTPayload & { active?: unknown };
+    try {
+      ({ payload } = await jwtVerify(token, await this.getJwks(), {
+        issuer: s.issuer,
+        audience: s.clientId,
+        algorithms: ['RS256'],
+        typ: ACCOUNT_STATUS_TYP,
+        maxTokenAge: '120s',
+        requiredClaims: ['sub', 'jti', 'iat', 'exp'],
+      }));
+    } catch (error) {
+      this.logger.warn(`Noto'g'ri holat so'rovi: ${String(error)}`);
+      throw new BadRequestException('token yaroqsiz');
+    }
+    if (typeof payload.active !== 'boolean') {
+      throw new BadRequestException('token yaroqsiz');
+    }
+    if (!this.rememberJti(payload.jti)) {
+      throw new BadRequestException('token allaqachon ishlatilgan');
+    }
+    const user = await this.userRepository.findOne({
+      where: { accountId: String(payload.sub) },
+    });
+    if (!user) throw new NotFoundException();
+    if (user.isDeleted) return;
+    await this.userRepository.update(
+      { id: user.id },
+      { status: payload.active },
+    );
+    if (!payload.active) {
+      await revokeUserSessions(this.sessionRepository, user.id);
+    }
+    this.logger.log(
+      `Akkaunt holati login serveridan: user ${user.id} -> ${payload.active ? 'faol' : 'bloklangan'}`,
+    );
   }
 
   /**
