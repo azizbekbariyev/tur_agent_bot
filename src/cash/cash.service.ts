@@ -53,6 +53,7 @@ import {
   tashkentMidnight,
 } from '../common/date';
 import { escapeLike } from '../common/text';
+import { LoginServerClient } from '../auth/login-server.client';
 import {
   CashFilterDto,
   CashListQueryDto,
@@ -250,6 +251,7 @@ export class CashService {
     private readonly serviceTypeRepository: Repository<ServiceType>,
     private readonly cashNotificationService: CashNotificationService,
     private readonly settingsService: SettingsService,
+    private readonly loginServer: LoginServerClient,
   ) {}
 
   /* ================================ yordamchilar ================================ */
@@ -1876,6 +1878,25 @@ export class CashService {
     return username;
   }
 
+  /**
+   * Login serveri ulangan filialda (K3) xodimlarni boshqarish login serveri orqali o'tadi.
+   * Amalni bajaruvchi admin login serverida shu filialga bog'langan bo'lishi kerak.
+   */
+  private async actorAccountId(actor: UserReq) {
+    const me = await this.userRepository.findOne({ where: { id: actor.id } });
+    if (!me?.accountId) {
+      throw new ForbiddenException(
+        'Hisobingiz login serveriga bog‘lanmagan — xodimlarni boshqara olmaysiz',
+      );
+    }
+    return me.accountId;
+  }
+
+  /** Bog'langan xodim va filial login serveriga ulangan - o'zgarish login serveri orqali */
+  private viaLoginServer(target: User) {
+    return !!target.accountId && this.loginServer.enabled();
+  }
+
   async createUser(actor: UserReq, body: CreateUserDto) {
     requireAdmin(actor);
     this.assertCanManage(actor, body.type);
@@ -1883,8 +1904,7 @@ export class CashService {
     const username = body.username
       ? await this.prepareUsername(body.username)
       : null;
-
-    const saved = await this.userRepository.save({
+    const fields = {
       firstName: body.firstName,
       lastName: body.lastName,
       hashedPassword: await bcrypt.hash(body.password, 10),
@@ -1894,8 +1914,37 @@ export class CashService {
       status: body.status !== UserStatus.INACTIVE,
       telegramId: body.telegramId,
       monthlyTarget: body.monthlyTarget ?? null,
+    };
+
+    if (!this.loginServer.enabled()) {
+      const saved = await this.userRepository.save(fields);
+      return this.getMe({ ...actor, id: saved.id });
+    }
+
+    // Login serveri orqali: avval filialda (tranzaksiya ichida), keyin login serverida akkaunt.
+    // Login serveri rad etsa yoki ishlamasa - filialda ham hech narsa yaratilmaydi.
+    if (!username) {
+      throw new BadRequestException(
+        'Username kerak: xodim login serveri orqali kiradi',
+      );
+    }
+    const actorAccountId = await this.actorAccountId(actor);
+    const savedId = await this.dataSource.transaction(async (m) => {
+      const repo = m.getRepository(User);
+      const saved = await repo.save(fields);
+      const { accountId } = await this.loginServer.createAccount({
+        username,
+        fullName: [body.firstName, body.lastName].filter(Boolean).join(' '),
+        role: body.type,
+        status: fields.status ? 'active' : 'disabled',
+        bcryptHash: fields.hashedPassword,
+        localUserId: saved.id,
+        actorAccountId,
+      });
+      await repo.update({ id: saved.id }, { accountId });
+      return saved.id;
     });
-    return this.getMe({ ...actor, id: saved.id });
+    return this.getMe({ ...actor, id: savedId });
   }
 
   async updateUser(actor: UserReq, id: number, body: UpdateUserDto) {
@@ -1944,12 +1993,60 @@ export class CashService {
       const username = await this.prepareUsername(body.username, id);
       if (username !== target.username) patch.username = username;
     }
-    if (body.password?.trim()) {
-      patch.hashedPassword = await bcrypt.hash(body.password, 10);
+    const newPassword = body.password?.trim() ? body.password : null;
+    if (newPassword) {
+      patch.hashedPassword = await bcrypt.hash(newPassword, 10);
+    }
+
+    // Login serveriga bog'langan xodim (K3): rol, holat, username va parol login serveri orqali.
+    // Ism, email, Telegram, maqsad - faqat filialda.
+    const remote: {
+      role?: string;
+      status?: 'active' | 'disabled';
+      username?: string;
+    } = {};
+    const linked = !self && this.viaLoginServer(target);
+    if (linked) {
+      if (patch.type !== undefined && patch.type !== target.type) {
+        remote.role = patch.type;
+      }
+      if (patch.status !== undefined && patch.status !== target.status) {
+        remote.status = patch.status ? 'active' : 'disabled';
+      }
+      if (patch.username !== undefined) {
+        if (!patch.username) {
+          throw new BadRequestException(
+            'Login serveriga bog‘langan xodimning username’ini olib tashlab bo‘lmaydi',
+          );
+        }
+        remote.username = patch.username;
+      }
     }
 
     if (Object.keys(patch).length) {
-      await this.userRepository.update({ id }, patch);
+      if (linked && (Object.keys(remote).length || patch.hashedPassword)) {
+        const actorAccountId = await this.actorAccountId(actor);
+        const accountId = target.accountId!;
+        // Login serveri rad etsa yoki ishlamasa - filialdagi o'zgarish ham bekor bo'ladi
+        await this.dataSource.transaction(async (m) => {
+          await m.getRepository(User).update({ id }, patch);
+          if (Object.keys(remote).length) {
+            await this.loginServer.updateAccount(accountId, {
+              actorAccountId,
+              ...remote,
+            });
+          }
+          if (patch.hashedPassword) {
+            await this.loginServer.resetPassword(
+              accountId,
+              patch.hashedPassword,
+              actorAccountId,
+            );
+          }
+        });
+      } else {
+        await this.userRepository.update({ id }, patch);
+      }
     }
     // Bloklansa yoki paroli tiklansa - uning barcha kirishlari darhol tugaydi
     if (patch.status === false || patch.hashedPassword) {
@@ -1968,7 +2065,19 @@ export class CashService {
     });
     if (!target) throw new NotFoundException('Foydalanuvchi topilmadi');
     this.assertCanManage(actor, target.type);
-    await this.userRepository.update({ id }, { isDeleted: true });
+    if (this.viaLoginServer(target)) {
+      // Login serverida a'zolik o'chiriladi (shu filialga kira olmaydi, sessiyalari yopiladi)
+      const actorAccountId = await this.actorAccountId(actor);
+      await this.dataSource.transaction(async (m) => {
+        await m.getRepository(User).update({ id }, { isDeleted: true });
+        await this.loginServer.updateAccount(target.accountId!, {
+          actorAccountId,
+          status: 'disabled',
+        });
+      });
+    } else {
+      await this.userRepository.update({ id }, { isDeleted: true });
+    }
     await revokeUserSessions(this.sessionRepository, id);
     return { success: true };
   }
@@ -1980,6 +2089,12 @@ export class CashService {
       .addSelect('u.hashedPassword')
       .where('u.id = :id', { id: user.id })
       .getOne();
+    // Login serveriga bog'langan xodim (K2): yagona parol faqat login serverida o'zgaradi
+    if (me?.accountId && this.loginServer.enabled()) {
+      throw new BadRequestException(
+        'Parol login serverida o‘zgartiriladi: Profil → “Parolni o‘zgartirish”',
+      );
+    }
     const valid =
       !!me?.hashedPassword &&
       (await bcrypt.compare(body.currentPassword, me.hashedPassword));

@@ -338,6 +338,9 @@ export class AuthService {
   async forgotPassword(email: string) {
     const user = await this.findWithPassword({ email });
     const base = frontendUrl();
+    // Login serveriga bog'langan xodim (K4): o'z-o'zini tiklash yo'q - parolni filial admini
+    // Boshqaruv'da tiklaydi. Javob baribir bir xil (email borligi oshkor bo'lmasin).
+    if (user?.accountId) return { sent: true };
     if (user && !user.isDeleted && user.status && user.telegramId && base) {
       const token = await this.jwtService.signAsync(
         {
@@ -374,7 +377,9 @@ export class AuthService {
       !user ||
       user.isDeleted ||
       !user.status ||
-      passwordStamp(user.hashedPassword ?? '') !== payload.stamp
+      passwordStamp(user.hashedPassword ?? '') !== payload.stamp ||
+      // Bog'langandan oldin yuborilgan havola ham ishlamaydi (K4)
+      !!user.accountId
     ) {
       throw new BadRequestException('Havola yaroqsiz yoki muddati tugagan');
     }

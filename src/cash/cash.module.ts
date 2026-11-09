@@ -19,6 +19,7 @@ import { UserSession } from '../bot/models/user_session';
 import { CashNotificationService } from './cash-notification.service';
 import { VoucherService } from './voucher.service';
 import { SettingsModule } from '../settings/settings.module';
+import { LoginServerClient } from '../auth/login-server.client';
 
 @Module({
   imports: [
@@ -40,6 +41,12 @@ import { SettingsModule } from '../settings/settings.module';
     SettingsModule,
   ],
   controllers: [CashController],
-  providers: [CashService, JwtService, CashNotificationService, VoucherService],
+  providers: [
+    CashService,
+    JwtService,
+    CashNotificationService,
+    VoucherService,
+    LoginServerClient,
+  ],
 })
 export class CashModule {}

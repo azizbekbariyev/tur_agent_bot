@@ -110,6 +110,10 @@ export class OidcService {
       switchUrl: s
         ? `${s.issuer}/select?from=${encodeURIComponent(s.clientId)}`
         : null,
+      // Bog'langan xodim uchun "Parolni o'zgartirish" (yagona parol, K1/K2)
+      passwordUrl: s
+        ? `${s.issuer}/password?from=${encodeURIComponent(s.clientId)}`
+        : null,
     };
   }
 
