@@ -13,5 +13,7 @@ import { UserSession } from '../bot/models/user_session';
   imports: [TypeOrmModule.forFeature([User, UserSession]), BotModule],
   controllers: [AuthController, OidcController],
   providers: [AuthService, OidcService, JwtService],
+  // Ichki (login serveri -> filial) so'rovlarni tekshirish uchun
+  exports: [OidcService],
 })
 export class AuthModule {}

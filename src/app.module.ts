@@ -11,6 +11,7 @@ import { ScheduleModule } from '@nestjs/schedule';
 import { UserModule } from './user/user.module';
 import { SettingsModule } from './settings/settings.module';
 import { PartnersModule } from './partners/partners.module';
+import { InternalModule } from './internal/internal.module';
 import { ClientsModule } from './clients/clients.module';
 import { ReportsModule } from './reports/reports.module';
 import { BruttoRateNumeric1761955200000 } from './migrations/1761955200000-BruttoRateNumeric';
@@ -64,6 +65,7 @@ import { HealthController } from './health.controller';
     UserModule,
     SettingsModule,
     PartnersModule,
+    InternalModule,
     ClientsModule,
     ReportsModule,
   ],

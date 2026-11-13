@@ -631,7 +631,17 @@ export class CashService {
       * (CASE WHEN c.additional_user IS NOT NULL THEN 0.5 ELSE 1 END) * ${PROFIT_SQL})`;
   }
 
-  async getDashboardCharts(user: UserReq, dto: DashboardFilterDto) {
+  /**
+   * opts.limit: yo'nalish va xodimlar ro'yxati uzunligi (filial dashboardi - 7;
+   * Superadmin statistikasi - null, cheklovsiz). opts.withAccountId: xodimning
+   * login serveridagi akkaunti (ikki filialdagi bir odamni birlashtirish uchun).
+   */
+  async getDashboardCharts(
+    user: UserReq,
+    dto: DashboardFilterDto,
+    opts: { limit?: number | null; withAccountId?: boolean } = {},
+  ) {
+    const limit = opts.limit === undefined ? 7 : opts.limit;
     const startDate = parseDate(dto.startDate, 'startDate');
     const endDate = parseDate(dto.endDate, 'endDate');
     const sharePercent = await this.settingsService.getSharePercent();
@@ -673,7 +683,7 @@ export class CashService {
         .addSelect(`COALESCE(SUM(${PROFIT_SQL}), 0)`, 'profit')
         .groupBy('c.destination')
         .orderBy('SUM(c.turist_count)', 'DESC')
-        .limit(7)
+        .limit(limit ?? undefined)
         .getRawMany<Record<string, string>>(),
 
       // Xodimlar reytingi (kassa egasi bo'yicha) - faqat rahbar va buxgalter uchun
@@ -690,11 +700,13 @@ export class CashService {
             .addSelect(`COALESCE(SUM(${BRUTTO_UZS_SQL}), 0)`, 'brutto')
             .addSelect(`COALESCE(SUM(${PROFIT_SQL}), 0)`, 'profit')
             .addSelect(`COALESCE(SUM(${bonusSql}), 0)`, 'bonus')
+            .addSelect('u.account_id', 'accountId')
             .groupBy('u.id')
             .addGroupBy('u.firstName')
             .addGroupBy('u.lastName')
+            .addGroupBy('u.account_id')
             .orderBy(`SUM(${PROFIT_SQL})`, 'DESC')
-            .limit(7)
+            .limit(limit ?? undefined)
             .getRawMany<Record<string, string>>()
         : Promise.resolve([] as Record<string, string>[]),
     ]);
@@ -743,6 +755,7 @@ export class CashService {
         brutto: num(r.brutto),
         profit: num(r.profit),
         bonus: num(r.bonus),
+        ...(opts.withAccountId ? { accountId: r.accountId ?? null } : {}),
       })),
     };
   }

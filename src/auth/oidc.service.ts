@@ -3,6 +3,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { ConfigService } from '@nestjs/config';
@@ -338,6 +339,46 @@ export class OidcService {
       this.logger.warn(`Login serveridan chiqarib bo'lmadi: ${String(error)}`);
       this.loginRedirect(res, 'logout=local');
     }
+  }
+
+  /**
+   * Login serveri -> filial ichki so'rovi (masalan, Superadmin paneli statistikasi).
+   * `Authorization: Bearer <JWT>`: RS256 (login serverining JWKS), iss = login serveri,
+   * aud = shu filial, typ aniq, 60 soniyadan eski emas, jti bir martalik.
+   * Har qanday xato - 401 (sababi javobda aytilmaydi, faqat logda).
+   */
+  async verifyServiceToken(authorization: unknown, typ: string) {
+    const s = this.settings();
+    const token =
+      typeof authorization === 'string' && authorization.startsWith('Bearer ')
+        ? authorization.slice(7).trim()
+        : '';
+    if (!s || !token) throw new UnauthorizedException();
+    let payload: JWTPayload;
+    try {
+      ({ payload } = await jwtVerify(token, await this.getJwks(), {
+        issuer: s.issuer,
+        audience: s.clientId,
+        algorithms: ['RS256'],
+        typ,
+        maxTokenAge: '60s',
+        requiredClaims: ['jti', 'iat', 'exp'],
+      }));
+      // Uzoq muddatli token qabul qilinmaydi (imzolovchi xato qilsa ham)
+      if (Number(payload.exp) - Number(payload.iat) > 60) {
+        throw new Error('muddat 60 soniyadan uzun');
+      }
+    } catch (error) {
+      this.logger.warn(`Ichki so'rov rad etildi (${typ}): ${String(error)}`);
+      throw new UnauthorizedException();
+    }
+    if (!this.rememberJti(payload.jti)) {
+      this.logger.warn(
+        `Ichki so'rov rad etildi (${typ}): jti qayta ishlatilgan`,
+      );
+      throw new UnauthorizedException();
+    }
+    return payload;
   }
 
   private rememberJti(jti: unknown) {

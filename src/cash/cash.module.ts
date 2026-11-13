@@ -48,5 +48,7 @@ import { LoginServerClient } from '../auth/login-server.client';
     VoucherService,
     LoginServerClient,
   ],
+  // Superadmin statistikasi filial dashboardi bilan aynan bir xil hisobni ishlatadi
+  exports: [CashService],
 })
 export class CashModule {}
