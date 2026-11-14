@@ -76,8 +76,13 @@ import {
 } from './dto/cash.dto';
 import {
   ACTIVE_STATUS_SQL,
+  APPROVED_STATUSES,
   BRUTTO_UZS_SQL,
   DEBT_SQL,
+  PARTICIPANTS_SQL,
+  PART_TOURISTS_SQL,
+  SHARE_SQL,
+  participantShare,
   DEBT_THRESHOLD,
   PROFIT_SQL,
   getBonus,
@@ -549,7 +554,11 @@ export class CashService {
     return {
       openedCashes:
         count('draft') + count('pending_approval') + count('sent_for_rework'),
-      soldTours: count('approved') + count('closed'),
+      // "Sotilgan turlar" (egasi qarori A, 2026-11-14): tushum bilan bir xil kassalar (qoralama va
+      // bekor qilinganlardan tashqari); ichida tasdiqlangan (approved+closed) va tekshiruvdagilar
+      soldTours: active.length,
+      soldToursApproved: active.filter((c) => APPROVED_STATUSES.includes(c.status)).length,
+      soldToursPending: active.filter((c) => !APPROVED_STATUSES.includes(c.status)).length,
       cancelledCashes: count('cancelled'),
       closedCashes: count('closed'),
       totalBrutto,
@@ -687,28 +696,27 @@ export class CashService {
         .limit(limit ?? undefined)
         .getRawMany<Record<string, string>>(),
 
-      // Xodimlar reytingi (kassa egasi bo'yicha) - faqat rahbar va buxgalter uchun
+      // Xodimlar reytingi (egasi qarori B): egasi va qo'shimcha xodim; qo'shimcha xodim bo'lsa pul
+      // summalari yarmidan, kassa soni har biriga 1. Faqat rahbar va buxgalter uchun.
       canViewAll(user.role)
-        ? base()
-            .innerJoin('c.user', 'u')
-            .select('u.id', 'id')
-            .addSelect(
-              "CONCAT(u.firstName, ' ', COALESCE(u.lastName, ''))",
-              'name',
-            )
-            .addSelect('COUNT(c.id)', 'cashCount')
-            .addSelect('COALESCE(SUM(c.turist_count), 0)', 'tourists')
-            .addSelect(`COALESCE(SUM(${BRUTTO_UZS_SQL}), 0)`, 'brutto')
-            .addSelect(`COALESCE(SUM(${PROFIT_SQL}), 0)`, 'profit')
-            .addSelect(`COALESCE(SUM(${bonusSql}), 0)`, 'bonus')
-            .addSelect('u.account_id', 'accountId')
-            .groupBy('u.id')
-            .addGroupBy('u.firstName')
-            .addGroupBy('u.lastName')
-            .addGroupBy('u.account_id')
-            .orderBy(`SUM(${PROFIT_SQL})`, 'DESC')
-            .limit(limit ?? undefined)
-            .getRawMany<Record<string, string>>()
+        ? this.dataSource.query<Record<string, string>[]>(
+            `SELECT u.id, CONCAT(u.first_name, ' ', COALESCE(u.last_name, '')) AS name,
+                    COUNT(DISTINCT c.id) AS "cashCount",
+                    COALESCE(SUM(${PART_TOURISTS_SQL}), 0) AS tourists,
+                    COALESCE(SUM(${BRUTTO_UZS_SQL} * ${SHARE_SQL}), 0) AS brutto,
+                    COALESCE(SUM(${PROFIT_SQL} * ${SHARE_SQL}), 0) AS profit,
+                    COALESCE(SUM(${bonusSql}), 0) AS bonus,
+                    u.account_id AS "accountId"
+             FROM cash c LEFT JOIN brutto b ON b.id = c.brutto_id
+             ${PARTICIPANTS_SQL}
+             JOIN "user" u ON u.id = p.uid
+             WHERE c.is_deleted = false AND ${ACTIVE_STATUS_SQL}
+               AND c.created_at BETWEEN $1 AND $2
+             GROUP BY u.id, u.first_name, u.last_name, u.account_id
+             ORDER BY SUM(${PROFIT_SQL} * ${SHARE_SQL}) DESC, u.id
+             ${limit ? `LIMIT ${Number(limit)}` : ''}`,
+            [startDate, endDate],
+          )
         : Promise.resolve([] as Record<string, string>[]),
     ]);
 
@@ -810,6 +818,7 @@ export class CashService {
         .leftJoinAndSelect('c.moneys', 'm')
         .leftJoinAndSelect('c.cashServices', 'cs')
         .leftJoinAndSelect('c.additionalUser', 'au')
+        .leftJoinAndSelect('c.user', 'ou')
         .where('c.is_deleted = false')
         .andWhere(ACTIVE_STATUS_SQL)
         .andWhere('(c.user_id = :uid OR c.additional_user = :uid)', {
@@ -817,11 +826,8 @@ export class CashService {
         })
         .andWhere('c.created_at BETWEEN :s AND :e', { s, e });
 
-    const profitSubquery = (column: string) => `
-      SELECT ${column} AS uid, ${PROFIT_SQL} AS profit
-      FROM cash c LEFT JOIN brutto b ON b.id = c.brutto_id
-      WHERE c.is_deleted = false AND ${ACTIVE_STATUS_SQL}
-        AND c.created_at BETWEEN $1 AND $2 AND ${column} IS NOT NULL`;
+    // Reyting asosi (egasi qarori B): qo'shimcha xodim bo'lsa foyda yarmidan - dashboard bilan bir xil
+    const myShare = (c: Cash) => participantShare(c, user.id);
 
     const [current, previous, me, employees, profits, debtCashes] =
       await Promise.all([
@@ -833,9 +839,12 @@ export class CashService {
           select: { id: true },
         }),
         this.dataSource.query<{ uid: number; profit: string }[]>(
-          `SELECT uid, SUM(profit) AS profit FROM (
-            ${profitSubquery('c.user_id')} UNION ALL ${profitSubquery('c.additional_user')}
-          ) t GROUP BY uid`,
+          `SELECT p.uid, SUM(${PROFIT_SQL} * ${SHARE_SQL}) AS profit
+           FROM cash c LEFT JOIN brutto b ON b.id = c.brutto_id
+           ${PARTICIPANTS_SQL}
+           WHERE c.is_deleted = false AND ${ACTIVE_STATUS_SQL}
+             AND c.created_at BETWEEN $1 AND $2
+           GROUP BY p.uid`,
           [start, end],
         ),
         this.cashRepository
@@ -870,7 +879,7 @@ export class CashService {
     const weekly = [0, 0, 0, 0, 0];
     for (const cash of current) {
       const day = Number(tashkentDate(cash.created_at).slice(8, 10));
-      weekly[Math.min(4, Math.floor((day - 1) / 7))] += getProfit(cash);
+      weekly[Math.min(4, Math.floor((day - 1) / 7))] += getProfit(cash) * myShare(cash);
     }
 
     // Davr bo'yicha foyda: 14 kungacha - kunlik, undan uzun - 7 kunlik bo'laklar
@@ -888,7 +897,7 @@ export class CashService {
       const idx = Math.floor(
         daysBetween(firstDay, tashkentDate(cash.created_at)) / step,
       );
-      if (trend[idx]) trend[idx].profit += getProfit(cash);
+      if (trend[idx]) trend[idx].profit += getProfit(cash) * myShare(cash);
     }
 
     const sum = (list: Cash[], fn: (c: Cash) => number) =>
@@ -931,20 +940,21 @@ export class CashService {
     const dailyProfit = new Map<string, number>();
     for (const cash of current) {
       const d = tashkentDate(cash.created_at);
-      dailyProfit.set(d, (dailyProfit.get(d) ?? 0) + getProfit(cash));
+      dailyProfit.set(d, (dailyProfit.get(d) ?? 0) + getProfit(cash) * myShare(cash));
     }
     const pctOf = (profit: number, brutto: number) =>
       brutto > 0 ? Math.round((profit / brutto) * 1000) / 10 : 0;
-    const curBrutto = sum(current, getBrutto);
-    const curProfit = sum(current, getProfit);
-    const prevBrutto = sum(previous, getBrutto);
-    const prevProfit = sum(previous, getProfit);
+    const mine = (fn: (c: Cash) => number) => (c: Cash) => fn(c) * myShare(c);
+    const curBrutto = sum(current, mine(getBrutto));
+    const curProfit = sum(current, mine(getProfit));
+    const prevBrutto = sum(previous, mine(getBrutto));
+    const prevProfit = sum(previous, mine(getProfit));
 
     return {
       cashCount: current.length,
       prevCashCount,
-      brutto: sum(current, getBrutto),
-      profit: sum(current, getProfit),
+      brutto: curBrutto,
+      profit: curProfit,
       tourists: sum(current, (c) => Number(c.turist_count) || 0),
       profitPct: pctOf(curProfit, curBrutto),
       daily: this.dayRange(firstDay, lastDay).map((date) => ({

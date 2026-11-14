@@ -7,6 +7,9 @@ import { CashService } from '../cash/cash.service';
 import { PartnersService } from '../partners/partners.service';
 import {
   ACTIVE_STATUS_SQL,
+  PARTICIPANTS_SQL,
+  PART_TOURISTS_SQL,
+  SHARE_SQL,
   BRUTTO_UZS_SQL,
   PROFIT_SQL,
 } from '../cash/cash.utils';
@@ -107,6 +110,8 @@ export class InternalStatsService {
       employeeShare: round(num(d.employeeShare)),
       netProfit: round(num(d.netProfit)),
       soldTours: num(d.soldTours),
+      soldToursApproved: num(d.soldToursApproved),
+      soldToursPending: num(d.soldToursPending),
       touristCount: num(d.touristCount),
       openedCashes: num(d.openedCashes),
       cancelledCashes: num(d.cancelledCashes),
@@ -185,7 +190,10 @@ export class InternalStatsService {
       })
       .orderBy(`${PROFIT_SQL} / NULLIF(${BRUTTO_UZS_SQL}, 0)`, 'ASC')
       .limit(LOW_PROFIT_LIMIT);
-    if (userId !== undefined) qb.andWhere('c.user_id = :lpUid', { lpUid: userId });
+    // Xodim kartasi: u egasi yoki qo'shimcha xodimi bo'lgan kassalar (reyting asosi B)
+    if (userId !== undefined) {
+      qb.andWhere('(c.user_id = :lpUid OR c.additional_user = :lpUid)', { lpUid: userId });
+    }
     const rows = await qb.getRawMany<LowProfitRow>();
     return rows.map((r) => {
       const brutto = num(r.brutto);
@@ -322,7 +330,7 @@ export class InternalStatsService {
 
   /**
    * 5.3 Xodim kartasi (Superadmin paneli): bitta xodimning shu filialdagi statistikasi.
-   * Kassa EGASI (c.user_id) bo'yicha - panel va filial dashboardidagi xodimlar reytingi bilan bir xil asos.
+   * Reyting asosi B (2026-11-14): egasi yoki qo'shimcha xodimi bo'lgan kassalar; qo'shimcha xodim bo'lsa pul yarmidan.
    * Javobda mijoz ma'lumoti yo'q. Xodim filialda topilmasa: { linked: false }.
    */
   async employeeStats(q: EmployeeStatsQuery) {
@@ -341,13 +349,14 @@ export class InternalStatsService {
 
     const totals = async (s: Date, e: Date) => {
       const [r] = await this.dataSource.query<Record<string, string>[]>(
-        `SELECT COUNT(c.id) AS "cashCount",
-                COUNT(c.id) FILTER (WHERE c.status IN ('approved', 'closed')) AS "soldTours",
-                COALESCE(SUM(c.turist_count), 0) AS tourists,
-                COALESCE(SUM(${BRUTTO_UZS_SQL}), 0) AS brutto,
-                COALESCE(SUM(${PROFIT_SQL}), 0) AS profit
+        `SELECT COUNT(DISTINCT c.id) AS "cashCount",
+                COUNT(DISTINCT c.id) FILTER (WHERE c.status IN ('approved', 'closed')) AS "soldToursApproved",
+                COALESCE(SUM(${PART_TOURISTS_SQL}), 0) AS tourists,
+                COALESCE(SUM(${BRUTTO_UZS_SQL} * ${SHARE_SQL}), 0) AS brutto,
+                COALESCE(SUM(${PROFIT_SQL} * ${SHARE_SQL}), 0) AS profit
          FROM cash c LEFT JOIN brutto b ON b.id = c.brutto_id
-         WHERE c.is_deleted = false AND ${ACTIVE_STATUS_SQL} AND c.user_id = $1
+         ${PARTICIPANTS_SQL}
+         WHERE c.is_deleted = false AND ${ACTIVE_STATUS_SQL} AND p.uid = $1
            AND c.created_at BETWEEN $2 AND $3`,
         [uid, s, e],
       );
@@ -355,8 +364,12 @@ export class InternalStatsService {
       const profit = num(r.profit);
       return {
         cashCount: num(r.cashCount),
-        soldTours: num(r.soldTours),
+        // "Sotilgan turlar" (qaror A): tushum bilan bir xil kassalar
+        soldTours: num(r.cashCount),
+        soldToursApproved: num(r.soldToursApproved),
+        soldToursPending: num(r.cashCount) - num(r.soldToursApproved),
         tourists: num(r.tourists),
+        touristCount: num(r.tourists),
         brutto: round(brutto),
         profit: round(profit),
         profitPct: brutto > 0 ? Math.round((profit / brutto) * 1000) / 10 : 0,
@@ -366,11 +379,12 @@ export class InternalStatsService {
     const series = (bucket: 'day' | 'month', s: Date, e: Date) =>
       this.dataSource.query<Record<string, string>[]>(
         `SELECT to_char(DATE_TRUNC('${bucket}', c.created_at AT TIME ZONE 'Asia/Tashkent'), '${bucket === 'day' ? 'YYYY-MM-DD' : 'YYYY-MM'}') AS k,
-                COUNT(c.id) AS "cashCount",
-                COALESCE(SUM(${BRUTTO_UZS_SQL}), 0) AS brutto,
-                COALESCE(SUM(${PROFIT_SQL}), 0) AS profit
+                COUNT(DISTINCT c.id) AS "cashCount",
+                COALESCE(SUM(${BRUTTO_UZS_SQL} * ${SHARE_SQL}), 0) AS brutto,
+                COALESCE(SUM(${PROFIT_SQL} * ${SHARE_SQL}), 0) AS profit
          FROM cash c LEFT JOIN brutto b ON b.id = c.brutto_id
-         WHERE c.is_deleted = false AND ${ACTIVE_STATUS_SQL} AND c.user_id = $1
+         ${PARTICIPANTS_SQL}
+         WHERE c.is_deleted = false AND ${ACTIVE_STATUS_SQL} AND p.uid = $1
            AND c.created_at BETWEEN $2 AND $3
          GROUP BY 1 ORDER BY 1`,
         [uid, s, e],

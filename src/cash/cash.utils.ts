@@ -111,6 +111,36 @@ export const PROFIT_SQL = `(${BRUTTO_UZS_SQL} - c.netto)`;
 
 export const ACTIVE_STATUS_SQL = `c.status NOT IN ('draft', 'cancelled')`;
 
+/* ---- Reyting asosi (egasi qarori B, 2026-11-14) ----
+ * Kassa ishtirokchilari: egasi (c.user_id) va qo'shimcha xodim (c.additional_user).
+ * Qo'shimcha xodim bo'lsa pul summalari (sotuv, foyda, ulush) har biriga YARMIDAN, kassalar soni
+ * har biriga 1. Shunda barcha xodimlar summasi = filial (firma) summasi.
+ * Ulush (getBonusRate/bonusSql) bilan bir xil shart: additional_user bor - yarim.
+ * Eski ma'lumotda additional_user = user_id bo'lsa ham ikki qator (0.5 + 0.5) bitta odamga tushadi.
+ */
+export const PARTICIPANTS_SQL = `CROSS JOIN LATERAL (
+  SELECT c.user_id AS uid, true AS main
+  UNION ALL
+  SELECT c.additional_user, false WHERE c.additional_user IS NOT NULL
+) p`;
+export const SHARE_SQL = `(CASE WHEN c.additional_user IS NOT NULL THEN 0.5 ELSE 1 END)`;
+/** Turistlar - har ishtirokchiga to'liq (kassalar soni kabi), lekin bir odamga ikki marta emas */
+export const PART_TOURISTS_SQL = `(CASE WHEN p.main OR c.additional_user <> c.user_id THEN c.turist_count ELSE 0 END)`;
+
+/** JS tomonda: kassa summasining shu xodimga tegishli ulushi (yuqoridagi SQL bilan bir xil) */
+export function participantShare(
+  cash: { user?: { id: number } | null; additionalUser?: { id: number } | null },
+  userId: number,
+): number {
+  if (!cash.additionalUser) return cash.user?.id === userId ? 1 : 0;
+  const owner = cash.user?.id === userId ? 0.5 : 0;
+  const extra = cash.additionalUser.id === userId ? 0.5 : 0;
+  return owner + extra;
+}
+
+/** "Sotilgan turlar" (egasi qarori A): tushum bilan bir xil kassalar; ichida tasdiqlangan va tekshiruvdagilar */
+export const APPROVED_STATUSES = ['approved', 'closed'];
+
 /** Dogovor raqami berilganmi: "0", "00" yoki bo'sh - hali berilmagan */
 export const hasContractNumber = (value?: string | null) =>
   !!value && !/^0*$/.test(value.trim());
