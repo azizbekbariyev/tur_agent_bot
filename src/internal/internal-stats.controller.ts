@@ -2,6 +2,7 @@ import { Controller, Get, Header, Headers, Query } from '@nestjs/common';
 import { OidcService } from '../auth/oidc.service';
 import {
   InternalStatsService,
+  type EmployeeStatsQuery,
   type StatsQuery,
 } from './internal-stats.service';
 
@@ -28,5 +29,16 @@ export class InternalStatsController {
     // Avval token, keyin so'rov parametrlari (tokensiz so'rovga hech qanday xato tafsiloti yo'q)
     await this.oidc.verifyServiceToken(authorization, STATS_TOKEN_TYP);
     return this.stats.stats(query);
+  }
+
+  /** 5.3: bitta xodimning statistikasi (xodim kartasi) - xuddi shu xizmat tokeni bilan */
+  @Get('stats/employee')
+  @Header('Cache-Control', 'no-store')
+  async getEmployeeStats(
+    @Headers('authorization') authorization: string | undefined,
+    @Query() query: EmployeeStatsQuery,
+  ) {
+    await this.oidc.verifyServiceToken(authorization, STATS_TOKEN_TYP);
+    return this.stats.employeeStats(query);
   }
 }

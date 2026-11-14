@@ -66,6 +66,7 @@ import {
   CreateServiceTypeDto,
   CreateUserDto,
   DashboardFilterDto,
+  LeaderboardQueryDto,
   OptionalDateRangeDto,
   UpdateCashDto,
   UpdateCashEmployeeBonusDto,
@@ -761,6 +762,40 @@ export class CashService {
   }
 
   /** Xodim paneli: faqat o'z ko'rsatkichlari va reytingdagi o'rni */
+  /**
+   * 6.3 Liderlar reytingi (xodim ekrani): login serveri firma filiallaridan tuzadi va FAQAT o'rin,
+   * ism va filialni qaytaradi. Bu yerda ham faqat shu maydonlar uzatiladi (boshqa hech narsa qo'shilmaydi).
+   */
+  async getLeaderboard(user: UserReq, dto: LeaderboardQueryDto) {
+    const start = parseDate(dto.startDate, 'startDate');
+    const end = parseDate(dto.endDate, 'endDate');
+    const me = await this.userRepository.findOne({ where: { id: user.id } });
+    if (!me?.accountId || !this.loginServer.enabled()) {
+      throw new ForbiddenException(
+        'Reyting uchun "Travance orqali kirish" bilan kiring',
+      );
+    }
+    const r = await this.loginServer.leaderboard({
+      actorAccountId: me.accountId,
+      start: start.toISOString(),
+      end: end.toISOString(),
+      branch: dto.branch,
+    });
+    return {
+      period: r.period,
+      branchFilter: r.branchFilter,
+      branches: r.branches.map((b) => ({ id: b.id, name: b.name })),
+      missing: r.missing,
+      items: r.items.map((x) => ({
+        rank: x.rank,
+        name: x.name,
+        branches: x.branches,
+        me: x.me === true,
+      })),
+      me: { rank: r.me.rank, total: r.me.total },
+    };
+  }
+
   async getMeStats(user: UserReq, dto: DashboardFilterDto) {
     const start = parseDate(dto.startDate, 'startDate');
     const end = parseDate(dto.endDate, 'endDate');
@@ -892,16 +927,37 @@ export class CashService {
     const byDeparture = (a: Cash, b: Cash) =>
       a.departure_date.localeCompare(b.departure_date);
 
+    // 6.2 (5.3): kunlar bo'yicha foyda (davr ichidagi har kun), turistlar, o'rtacha foyda foizi
+    const dailyProfit = new Map<string, number>();
+    for (const cash of current) {
+      const d = tashkentDate(cash.created_at);
+      dailyProfit.set(d, (dailyProfit.get(d) ?? 0) + getProfit(cash));
+    }
+    const pctOf = (profit: number, brutto: number) =>
+      brutto > 0 ? Math.round((profit / brutto) * 1000) / 10 : 0;
+    const curBrutto = sum(current, getBrutto);
+    const curProfit = sum(current, getProfit);
+    const prevBrutto = sum(previous, getBrutto);
+    const prevProfit = sum(previous, getProfit);
+
     return {
       cashCount: current.length,
       prevCashCount,
       brutto: sum(current, getBrutto),
       profit: sum(current, getProfit),
+      tourists: sum(current, (c) => Number(c.turist_count) || 0),
+      profitPct: pctOf(curProfit, curBrutto),
+      daily: this.dayRange(firstDay, lastDay).map((date) => ({
+        date,
+        profit: Math.round(dailyProfit.get(date) ?? 0),
+      })),
       bonus: Math.round(sum(current, (c) => getBonus(c, sharePercent))),
       // Oldingi xuddi shunday davr - solishtirish uchun
       prev: {
-        brutto: sum(previous, getBrutto),
-        profit: sum(previous, getProfit),
+        brutto: prevBrutto,
+        profit: prevProfit,
+        cashCount: prevCashCount,
+        profitPct: pctOf(prevProfit, prevBrutto),
         bonus: Math.round(sum(previous, (c) => getBonus(c, sharePercent))),
       },
       trend: trend.map((t) => ({ ...t, profit: Math.round(t.profit) })),

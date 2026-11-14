@@ -159,6 +159,29 @@ export class LoginServerClient {
     );
   }
 
+  /** 6.3: firma bo'yicha liderlar reytingi - faqat o'rin, ism, filial (raqamlarsiz) */
+  leaderboard(input: {
+    actorAccountId: string;
+    start: string;
+    end: string;
+    branch?: string;
+  }) {
+    const qs = new URLSearchParams({
+      actorAccountId: input.actorAccountId,
+      start: input.start,
+      end: input.end,
+      branch: input.branch ?? 'all',
+    });
+    return this.call<{
+      period: { start: string; end: string };
+      branchFilter: string;
+      branches: { id: string; name: string }[];
+      missing: string[];
+      items: { rank: number; name: string; branches: string[]; me: boolean }[];
+      me: { rank: number | null; total: number };
+    }>('GET', `/leaderboard?${qs.toString()}`);
+  }
+
   resetPassword(accountId: string, bcryptHash: string, actorAccountId: string) {
     return this.call<{ ok: true; pushTo: string[] }>(
       'POST',

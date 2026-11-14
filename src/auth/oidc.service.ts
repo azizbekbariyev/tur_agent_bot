@@ -1,5 +1,7 @@
 import {
   BadRequestException,
+  ConflictException,
+  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
@@ -18,6 +20,7 @@ import { AuthService } from './auth.service';
 import { revokeUserSessions } from './sessions';
 import { ROLES, frontendUrl } from '../common/roles';
 import { localLoginEnabled } from '../common/flags';
+import { isValidUsername, normalizeUsername } from '../common/username';
 
 /**
  * Login serveri (login.travance.uz) orqali kirish: OpenID Connect, Authorization Code + PKCE.
@@ -33,6 +36,9 @@ const TX_TTL_S = 10 * 60;
 const BACKCHANNEL_EVENT = 'http://schemas.openid.net/event/backchannel-logout';
 const PASSWORD_HASH_TYP = 'pwhash+jwt';
 const ACCOUNT_STATUS_TYP = 'acctstatus+jwt';
+const MEMBER_TYP = 'member+jwt';
+// Superadmin paneli (5.3) tayinlay oladigan rollar: SUPERADMIN bu kanal orqali HECH QACHON o'rnatilmaydi
+const PANEL_ROLES = ['ADMIN', 'ACCOUNTANT', 'EMPLOYEE'];
 const BCRYPT_RE = /^\$2[aby]\$\d{2}\$[./A-Za-z0-9]{53}$/;
 
 type Discovery = {
@@ -493,6 +499,107 @@ export class OidcService {
     this.logger.log(
       `Akkaunt holati login serveridan: user ${user.id} -> ${payload.active ? 'faol' : 'bloklangan'}`,
     );
+  }
+
+  /**
+   * A'zolik (5.3, Superadmin paneli): login serveri xodimni shu filialga qo'shganda, rolini
+   * o'zgartirganda, filialdan uzganda yoki bloklaganda. Imzolangan server-server so'rovi
+   * (RS256, typ member+jwt, aud = shu filial, 2 daqiqa, jti bir martalik).
+   * - user qatori yo'q va faol: yangi qator (parolsiz; zaxira parol keyin password-hash bilan keladi).
+   * - bor: rol va holat yangilanadi; o'chirilgan bo'lsa va qayta ulansa - tiklanadi.
+   * - rol o'zgarsa yoki faolsizlansa - barcha seanslari yopiladi (yangi huquq bilan qayta kiradi).
+   * SUPERADMIN qatoriga bu kanal tegmaydi va SUPERADMIN rolini o'rnatmaydi.
+   */
+  async receiveMember(token: unknown): Promise<{ userId: number | null }> {
+    const s = this.require();
+    if (typeof token !== 'string' || !token) {
+      throw new BadRequestException('token kerak');
+    }
+    let payload: JWTPayload & {
+      role?: unknown;
+      active?: unknown;
+      username?: unknown;
+      name?: unknown;
+    };
+    try {
+      ({ payload } = await jwtVerify(token, await this.getJwks(), {
+        issuer: s.issuer,
+        audience: s.clientId,
+        algorithms: ['RS256'],
+        typ: MEMBER_TYP,
+        maxTokenAge: '120s',
+        requiredClaims: ['sub', 'jti', 'iat', 'exp'],
+      }));
+    } catch (error) {
+      this.logger.warn(`Noto'g'ri a'zolik so'rovi: ${String(error)}`);
+      throw new BadRequestException('token yaroqsiz');
+    }
+    const role = payload.role === null ? null : payload.role;
+    const username =
+      typeof payload.username === 'string'
+        ? normalizeUsername(payload.username)
+        : '';
+    const name =
+      typeof payload.name === 'string' ? payload.name.trim().slice(0, 120) : '';
+    if (
+      typeof payload.active !== 'boolean' ||
+      (role !== null && !PANEL_ROLES.includes(String(role))) ||
+      !isValidUsername(username)
+    ) {
+      throw new BadRequestException('token yaroqsiz');
+    }
+    if (!this.rememberJti(payload.jti)) {
+      throw new BadRequestException('token allaqachon ishlatilgan');
+    }
+    const accountId = String(payload.sub);
+    const active = payload.active && role !== null;
+    const user = await this.userRepository.findOne({ where: { accountId } });
+
+    if (!user) {
+      if (!active) return { userId: null };
+      const taken = await this.userRepository
+        .createQueryBuilder('u')
+        .where('lower(u.username) = :username', { username })
+        .getOne();
+      if (taken) {
+        this.logger.warn(
+          `A'zolik: username band (${username}) - filialdagi user ${taken.id}`,
+        );
+        throw new ConflictException('username band');
+      }
+      const [first, ...rest] = (name || username).split(/\s+/);
+      const saved = await this.userRepository.save(
+        this.userRepository.create({
+          firstName: first,
+          lastName: rest.join(' ') || undefined,
+          username,
+          accountId,
+          type: String(role),
+          status: true,
+          hashedPassword: '',
+        }),
+      );
+      this.logger.log(
+        `A'zolik login serveridan: yangi user ${saved.id} (${String(role)})`,
+      );
+      return { userId: saved.id };
+    }
+
+    if (user.type === 'SUPERADMIN') {
+      this.logger.warn(`A'zolik: SUPERADMIN user ${user.id} ga tegilmaydi`);
+      throw new ForbiddenException();
+    }
+    const patch: Partial<User> = { status: active };
+    if (role !== null && user.type !== role) patch.type = String(role);
+    if (active && user.isDeleted) patch.isDeleted = false;
+    await this.userRepository.update({ id: user.id }, patch);
+    if (!active || patch.type !== undefined) {
+      await revokeUserSessions(this.sessionRepository, user.id);
+    }
+    this.logger.log(
+      `A'zolik login serveridan: user ${user.id} -> ${active ? 'faol' : 'nofaol'}${patch.type ? `, rol ${user.type} -> ${patch.type}` : ''}${patch.isDeleted === false ? ', tiklandi' : ''}`,
+    );
+    return { userId: user.id };
   }
 
   /**

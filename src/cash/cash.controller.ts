@@ -26,6 +26,7 @@ import {
   CreateServiceTypeDto,
   CreateUserDto,
   DashboardFilterDto,
+  LeaderboardQueryDto,
   OptionalDateRangeDto,
   UpdateCashDto,
   UpdateCashEmployeeBonusDto,
@@ -59,6 +60,11 @@ export class CashController {
   @Get('dashboard-chart')
   getDashboardChart2(@Req() req: AuthReq, @Query() query: DashboardFilterDto) {
     return this.cashService.getDashboardCharts(req.user, query);
+  }
+
+  @Get('me/leaderboard')
+  getLeaderboard(@Req() req: AuthReq, @Query() query: LeaderboardQueryDto) {
+    return this.cashService.getLeaderboard(req.user, query);
   }
 
   @Get('me/stats')

@@ -11,6 +11,7 @@ import {
   IsBoolean,
   IsEmail,
   IsIn,
+  Matches,
   Max,
   Min,
   MinLength,
@@ -57,6 +58,13 @@ export class DashboardFilterDto {
 
   @IsDateString()
   endDate!: string;
+}
+
+/** 6.3 Liderlar reytingi: davr + filial (firma ichida: "all" yoki filial identifikatori) */
+export class LeaderboardQueryDto extends DashboardFilterDto {
+  @IsOptional()
+  @Matches(/^(all|[a-z0-9][a-z0-9-]{0,39})$/)
+  branch?: string;
 }
 
 export class OptionalDateRangeDto {

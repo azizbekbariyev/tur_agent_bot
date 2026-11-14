@@ -60,6 +60,14 @@ export class OidcController {
     await this.oidc.receiveAccountStatus(body?.token);
   }
 
+  /** Login serveri -> filial (server-server): a'zolik (Superadmin paneli, 5.3), imzolangan */
+  @Post('internal/member')
+  @HttpCode(200)
+  @Header('Cache-Control', 'no-store')
+  member(@Body() body: { token?: unknown }) {
+    return this.oidc.receiveMember(body?.token);
+  }
+
   /** Login serveri -> filial (server-server): zaxira kirish uchun bcrypt hash, imzolangan */
   @Post('internal/password-hash')
   @HttpCode(204)

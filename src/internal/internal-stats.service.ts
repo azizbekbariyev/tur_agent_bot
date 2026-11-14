@@ -57,6 +57,11 @@ export type StatsQuery = {
   lowProfitPct?: string;
 };
 
+export type EmployeeStatsQuery = StatsQuery & { accountId?: string };
+
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 @Injectable()
 export class InternalStatsService {
   constructor(
@@ -154,8 +159,8 @@ export class InternalStatsService {
   }
 
   /** Foyda foizi chegaradan past kassalar (davr ichida) - mijoz ma'lumotisiz */
-  private async lowProfit(start: Date, end: Date, pct: number) {
-    const rows = await this.cashRepository
+  private async lowProfit(start: Date, end: Date, pct: number, userId?: number) {
+    const qb = this.cashRepository
       .createQueryBuilder('c')
       .leftJoin('c.brutto', 'b')
       .leftJoin('c.user', 'u')
@@ -179,8 +184,9 @@ export class InternalStatsService {
         ratio: pct / 100,
       })
       .orderBy(`${PROFIT_SQL} / NULLIF(${BRUTTO_UZS_SQL}, 0)`, 'ASC')
-      .limit(LOW_PROFIT_LIMIT)
-      .getRawMany<LowProfitRow>();
+      .limit(LOW_PROFIT_LIMIT);
+    if (userId !== undefined) qb.andWhere('c.user_id = :lpUid', { lpUid: userId });
+    const rows = await qb.getRawMany<LowProfitRow>();
     return rows.map((r) => {
       const brutto = num(r.brutto);
       const profit = num(r.profit);
@@ -311,6 +317,94 @@ export class InternalStatsService {
       lowProfit: { thresholdPct: lowProfitPct, items: lowProfit },
       online,
       staff,
+    };
+  }
+
+  /**
+   * 5.3 Xodim kartasi (Superadmin paneli): bitta xodimning shu filialdagi statistikasi.
+   * Kassa EGASI (c.user_id) bo'yicha - panel va filial dashboardidagi xodimlar reytingi bilan bir xil asos.
+   * Javobda mijoz ma'lumoti yo'q. Xodim filialda topilmasa: { linked: false }.
+   */
+  async employeeStats(q: EmployeeStatsQuery) {
+    const { start, end, lowProfitPct } = this.parse(q);
+    const accountId = String(q.accountId ?? '');
+    if (!UUID_RE.test(accountId)) {
+      throw new BadRequestException('accountId kerak');
+    }
+    const [user] = await this.dataSource.query<{ id: number }[]>(
+      `SELECT id FROM "user" WHERE account_id = $1`,
+      [accountId],
+    );
+    if (!user) return { linked: false };
+    const uid = Number(user.id);
+    const { prevStart, prevEnd } = previousPeriod(start, end);
+
+    const totals = async (s: Date, e: Date) => {
+      const [r] = await this.dataSource.query<Record<string, string>[]>(
+        `SELECT COUNT(c.id) AS "cashCount",
+                COUNT(c.id) FILTER (WHERE c.status IN ('approved', 'closed')) AS "soldTours",
+                COALESCE(SUM(c.turist_count), 0) AS tourists,
+                COALESCE(SUM(${BRUTTO_UZS_SQL}), 0) AS brutto,
+                COALESCE(SUM(${PROFIT_SQL}), 0) AS profit
+         FROM cash c LEFT JOIN brutto b ON b.id = c.brutto_id
+         WHERE c.is_deleted = false AND ${ACTIVE_STATUS_SQL} AND c.user_id = $1
+           AND c.created_at BETWEEN $2 AND $3`,
+        [uid, s, e],
+      );
+      const brutto = num(r.brutto);
+      const profit = num(r.profit);
+      return {
+        cashCount: num(r.cashCount),
+        soldTours: num(r.soldTours),
+        tourists: num(r.tourists),
+        brutto: round(brutto),
+        profit: round(profit),
+        profitPct: brutto > 0 ? Math.round((profit / brutto) * 1000) / 10 : 0,
+      };
+    };
+
+    const series = (bucket: 'day' | 'month', s: Date, e: Date) =>
+      this.dataSource.query<Record<string, string>[]>(
+        `SELECT to_char(DATE_TRUNC('${bucket}', c.created_at AT TIME ZONE 'Asia/Tashkent'), '${bucket === 'day' ? 'YYYY-MM-DD' : 'YYYY-MM'}') AS k,
+                COUNT(c.id) AS "cashCount",
+                COALESCE(SUM(${BRUTTO_UZS_SQL}), 0) AS brutto,
+                COALESCE(SUM(${PROFIT_SQL}), 0) AS profit
+         FROM cash c LEFT JOIN brutto b ON b.id = c.brutto_id
+         WHERE c.is_deleted = false AND ${ACTIVE_STATUS_SQL} AND c.user_id = $1
+           AND c.created_at BETWEEN $2 AND $3
+         GROUP BY 1 ORDER BY 1`,
+        [uid, s, e],
+      );
+
+    // Oylik dinamika: davr oxiridan 12 oy orqaga
+    const monthStart = new Date(end);
+    monthStart.setUTCMonth(monthStart.getUTCMonth() - 11, 1);
+    monthStart.setUTCHours(0, 0, 0, 0);
+
+    const [current, previous, daily, monthly, low] = await Promise.all([
+      totals(start, end),
+      totals(prevStart, prevEnd),
+      series('day', start, end),
+      series('month', monthStart, end),
+      this.lowProfit(start, end, lowProfitPct, uid),
+    ]);
+    const map = (rows: Record<string, string>[], key: 'date' | 'month') =>
+      rows.map((r) => ({
+        [key]: r.k,
+        cashCount: num(r.cashCount),
+        brutto: round(num(r.brutto)),
+        profit: round(num(r.profit)),
+      }));
+    return {
+      linked: true,
+      generatedAt: new Date().toISOString(),
+      period: { start: start.toISOString(), end: end.toISOString() },
+      current,
+      previous,
+      daily: map(daily, 'date'),
+      monthly: map(monthly, 'month'),
+      // Faqat shu xodimning past foydali kassalari
+      lowProfit: low.map(({ userId: _u, accountId: _a, employee: _e, ...rest }) => rest),
     };
   }
 }
