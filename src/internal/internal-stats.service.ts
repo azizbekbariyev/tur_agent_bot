@@ -164,7 +164,12 @@ export class InternalStatsService {
   }
 
   /** Foyda foizi chegaradan past kassalar (davr ichida) - mijoz ma'lumotisiz */
-  private async lowProfit(start: Date, end: Date, pct: number, userId?: number) {
+  private async lowProfit(
+    start: Date,
+    end: Date,
+    pct: number,
+    userId?: number,
+  ) {
     const qb = this.cashRepository
       .createQueryBuilder('c')
       .leftJoin('c.brutto', 'b')
@@ -192,7 +197,9 @@ export class InternalStatsService {
       .limit(LOW_PROFIT_LIMIT);
     // Xodim kartasi: u egasi yoki qo'shimcha xodimi bo'lgan kassalar (reyting asosi B)
     if (userId !== undefined) {
-      qb.andWhere('(c.user_id = :lpUid OR c.additional_user = :lpUid)', { lpUid: userId });
+      qb.andWhere('(c.user_id = :lpUid OR c.additional_user = :lpUid)', {
+        lpUid: userId,
+      });
     }
     const rows = await qb.getRawMany<LowProfitRow>();
     return rows.map((r) => {
@@ -418,7 +425,15 @@ export class InternalStatsService {
       daily: map(daily, 'date'),
       monthly: map(monthly, 'month'),
       // Faqat shu xodimning past foydali kassalari
-      lowProfit: low.map(({ userId: _u, accountId: _a, employee: _e, ...rest }) => rest),
+      lowProfit: low.map((x) => ({
+        id: x.id,
+        seqNo: x.seqNo,
+        destination: x.destination,
+        createdAt: x.createdAt,
+        brutto: x.brutto,
+        profit: x.profit,
+        profitPct: x.profitPct,
+      })),
     };
   }
 }

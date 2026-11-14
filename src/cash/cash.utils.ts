@@ -98,6 +98,18 @@ export function getBonus(
   return getProfit(cash) * getBonusRate(cash, basePercent);
 }
 
+/**
+ * Kassa bo'yicha firmadan chiqadigan JAMI ulush (egasi qarori, 2026-11-14): bitta to'liq ulush.
+ * Qo'shimcha xodim bo'lsa u ikkiga bo'linadi (getBonus - har biriga yarmi), lekin firma uchun jami
+ * o'zgarmaydi. Sof foyda = Yalpi foyda - shu summa.
+ */
+export function getTotalShare(
+  cash: Cash,
+  basePercent = DEFAULT_SHARE_PERCENT,
+): number {
+  return getBonus(cash, basePercent) * (cash.additionalUser ? 2 : 1);
+}
+
 /* ---------------- SQL bo'laklari (alias: c = cash, b = brutto) ---------------- */
 
 export const BRUTTO_UZS_SQL = `COALESCE(CASE WHEN b.currency = 'UZS' THEN b.amount ELSE b.amount * b.currency_amount END, 0)`;
@@ -107,7 +119,13 @@ export const PAID_UZS_SQL = `COALESCE((SELECT SUM(CASE WHEN m.currency = 'UZS' T
 export const DEBT_SQL = `(${BRUTTO_UZS_SQL} - ${PAID_UZS_SQL})`;
 
 /** Yalpi foyda: brutto (so'mda) - netto (so'mda saqlanadi) */
-export const PROFIT_SQL = `(${BRUTTO_UZS_SQL} - c.netto)`;
+const PROFIT_RAW_SQL = `(${BRUTTO_UZS_SQL} - c.netto)`;
+/**
+ * Yalpi foyda SQL'da ham JS getProfit() kabi mingtagacha yaxlitlanadi (roundToNearestThousand bilan
+ * bir xil: musbatda 500 dan yuqoriga, manfiyda nol tomonga). Shunda reyting, grafiklar va dashboard
+ * jami bir xil chiqadi (egasi qarori, 2026-11-14).
+ */
+export const PROFIT_SQL = `(${PROFIT_RAW_SQL} - MOD(${PROFIT_RAW_SQL}, 1000) + CASE WHEN MOD(${PROFIT_RAW_SQL}, 1000) >= 500 THEN 1000 ELSE 0 END)`;
 
 export const ACTIVE_STATUS_SQL = `c.status NOT IN ('draft', 'cancelled')`;
 
@@ -129,13 +147,25 @@ export const PART_TOURISTS_SQL = `(CASE WHEN p.main OR c.additional_user <> c.us
 
 /** JS tomonda: kassa summasining shu xodimga tegishli ulushi (yuqoridagi SQL bilan bir xil) */
 export function participantShare(
-  cash: { user?: { id: number } | null; additionalUser?: { id: number } | null },
+  cash: {
+    user?: { id: number } | null;
+    additionalUser?: { id: number } | null;
+  },
   userId: number,
 ): number {
   if (!cash.additionalUser) return cash.user?.id === userId ? 1 : 0;
   const owner = cash.user?.id === userId ? 0.5 : 0;
   const extra = cash.additionalUser.id === userId ? 0.5 : 0;
   return owner + extra;
+}
+
+/** Xodimning shu kassadagi shaxsiy ulushi: jami ulush x ishtirok ulushi (yarim yoki to'liq) */
+export function getPersonalShare(
+  cash: Cash,
+  userId: number,
+  basePercent = DEFAULT_SHARE_PERCENT,
+): number {
+  return getTotalShare(cash, basePercent) * participantShare(cash, userId);
 }
 
 /** "Sotilgan turlar" (egasi qarori A): tushum bilan bir xil kassalar; ichida tasdiqlangan va tekshiruvdagilar */

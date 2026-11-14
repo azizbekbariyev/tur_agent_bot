@@ -85,7 +85,8 @@ import {
   participantShare,
   DEBT_THRESHOLD,
   PROFIT_SQL,
-  getBonus,
+  getTotalShare,
+  getPersonalShare,
   getBrutto,
   getDebt,
   getNetto,
@@ -535,21 +536,25 @@ export class CashService {
     let totalPaid = 0;
     let employeeShare = 0;
     let touristCount = 0;
+    let grossProfit = 0;
 
     for (const cash of active) {
       const brutto = getBrutto(cash);
       const debt = getDebt(cash);
       totalBrutto += brutto;
       totalNetto += getNetto(cash);
+      // Yalpi foyda - kassalar foydasi yig'indisi (har kassa mingtagacha yaxlitlangan, kassa sahifasi va
+      // ulush bilan bir xil). Shunda xodimlar reytingi, grafiklar va Excel jami aniq teng chiqadi.
+      grossProfit += getProfit(cash);
       totalPaid += getPaidAmount(cash);
-      employeeShare += getBonus(cash, sharePercent);
+      // Firmadan chiqadigan jami ulush: qo'shimcha xodim bo'lsa ikkala yarmi ham (egasi qarori a)
+      employeeShare += getTotalShare(cash, sharePercent);
       touristCount += num(cash.turist_count);
       if (debt > 0) {
         debtorSum += debt;
         debtorCashes++;
       }
     }
-    const grossProfit = totalBrutto - totalNetto;
 
     return {
       openedCashes:
@@ -557,8 +562,12 @@ export class CashService {
       // "Sotilgan turlar" (egasi qarori A, 2026-11-14): tushum bilan bir xil kassalar (qoralama va
       // bekor qilinganlardan tashqari); ichida tasdiqlangan (approved+closed) va tekshiruvdagilar
       soldTours: active.length,
-      soldToursApproved: active.filter((c) => APPROVED_STATUSES.includes(c.status)).length,
-      soldToursPending: active.filter((c) => !APPROVED_STATUSES.includes(c.status)).length,
+      soldToursApproved: active.filter((c) =>
+        APPROVED_STATUSES.includes(c.status),
+      ).length,
+      soldToursPending: active.filter(
+        (c) => !APPROVED_STATUSES.includes(c.status),
+      ).length,
       cancelledCashes: count('cancelled'),
       closedCashes: count('closed'),
       totalBrutto,
@@ -879,7 +888,8 @@ export class CashService {
     const weekly = [0, 0, 0, 0, 0];
     for (const cash of current) {
       const day = Number(tashkentDate(cash.created_at).slice(8, 10));
-      weekly[Math.min(4, Math.floor((day - 1) / 7))] += getProfit(cash) * myShare(cash);
+      weekly[Math.min(4, Math.floor((day - 1) / 7))] +=
+        getProfit(cash) * myShare(cash);
     }
 
     // Davr bo'yicha foyda: 14 kungacha - kunlik, undan uzun - 7 kunlik bo'laklar
@@ -940,7 +950,10 @@ export class CashService {
     const dailyProfit = new Map<string, number>();
     for (const cash of current) {
       const d = tashkentDate(cash.created_at);
-      dailyProfit.set(d, (dailyProfit.get(d) ?? 0) + getProfit(cash) * myShare(cash));
+      dailyProfit.set(
+        d,
+        (dailyProfit.get(d) ?? 0) + getProfit(cash) * myShare(cash),
+      );
     }
     const pctOf = (profit: number, brutto: number) =>
       brutto > 0 ? Math.round((profit / brutto) * 1000) / 10 : 0;
@@ -961,14 +974,18 @@ export class CashService {
         date,
         profit: Math.round(dailyProfit.get(date) ?? 0),
       })),
-      bonus: Math.round(sum(current, (c) => getBonus(c, sharePercent))),
+      bonus: Math.round(
+        sum(current, (c) => getPersonalShare(c, user.id, sharePercent)),
+      ),
       // Oldingi xuddi shunday davr - solishtirish uchun
       prev: {
         brutto: prevBrutto,
         profit: prevProfit,
         cashCount: prevCashCount,
         profitPct: pctOf(prevProfit, prevBrutto),
-        bonus: Math.round(sum(previous, (c) => getBonus(c, sharePercent))),
+        bonus: Math.round(
+          sum(previous, (c) => getPersonalShare(c, user.id, sharePercent)),
+        ),
       },
       trend: trend.map((t) => ({ ...t, profit: Math.round(t.profit) })),
       // 7 kun ichida uchadigan kassalar (qarzi bilan)
@@ -2216,6 +2233,7 @@ export class CashService {
       .leftJoinAndSelect('c.moneys', 'm')
       .leftJoinAndSelect('c.cashServices', 'cs')
       .leftJoinAndSelect('c.additionalUser', 'au')
+      .leftJoinAndSelect('c.user', 'ou')
       .where('c.is_deleted = false')
       .andWhere('(c.user_id = :uid OR c.additional_user = :uid)', {
         uid: targetUserId,
@@ -2238,7 +2256,7 @@ export class CashService {
         netto: getNetto(cash),
         profit: getProfit(cash),
         debt: getDebt(cash),
-        bonus: active ? getBonus(cash, sharePercent) : 0,
+        bonus: active ? getPersonalShare(cash, targetUserId, sharePercent) : 0,
         bonusTaken: cash.is_bonus_taken,
         active,
       };

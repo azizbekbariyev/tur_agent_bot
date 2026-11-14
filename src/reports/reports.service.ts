@@ -8,7 +8,8 @@ import { SettingsService } from '../settings/settings.service';
 import { parseDate, tashkentDate } from '../common/date';
 import { ExportQueryDto } from '../cash/dto/cash.dto';
 import {
-  getBonus,
+  getPersonalShare,
+  participantShare,
   getBrutto,
   getDebt,
   getNetto,
@@ -220,8 +221,12 @@ export class ReportsService {
           debt: number;
         }
       >();
+      // Reyting asosi B (egasi qarori, 2026-11-14): egasi va qo'shimcha xodim; qo'shimcha xodim bo'lsa
+      // pul summalari (sotuv, foyda, qarz, ulush) ikkalasiga yarmidan, kassa soni har biriga 1.
+      // Jami ustunlar yig'indisi = filial jami.
       const add = (u: Cash['user'] | null | undefined, cash: Cash) => {
         if (!u) return;
+        const share = participantShare(cash, u.id);
         const e = by.get(u.id) ?? {
           name: fullName(u),
           cashCount: 0,
@@ -233,15 +238,18 @@ export class ReportsService {
         };
         e.cashCount += 1;
         e.tourists += Number(cash.turist_count ?? 0);
-        e.brutto += getBrutto(cash);
-        e.profit += getProfit(cash);
-        e.bonus += getBonus(cash, sharePercent);
-        e.debt += Math.max(getDebt(cash), 0);
+        e.brutto += getBrutto(cash) * share;
+        e.profit += getProfit(cash) * share;
+        e.bonus += getPersonalShare(cash, u.id, sharePercent);
+        e.debt += Math.max(getDebt(cash), 0) * share;
         by.set(u.id, e);
       };
       for (const cash of cashes.filter((c) => isActiveStatus(c.status))) {
         add(cash.user, cash);
-        add(cash.additionalUser, cash);
+        // eski ma'lumotda qo'shimcha xodim = egasi bo'lishi mumkin: bir odam ikki marta sanalmasin
+        if (cash.additionalUser && cash.additionalUser.id !== cash.user?.id) {
+          add(cash.additionalUser, cash);
+        }
       }
       return {
         columns: [
