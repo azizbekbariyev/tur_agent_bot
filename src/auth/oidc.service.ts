@@ -534,7 +534,12 @@ export class OidcService {
       this.logger.warn(`Noto'g'ri a'zolik so'rovi: ${String(error)}`);
       throw new BadRequestException('token yaroqsiz');
     }
-    const role = payload.role === null ? null : payload.role;
+    const role: string | null =
+      payload.role === null
+        ? null
+        : typeof payload.role === 'string'
+          ? payload.role
+          : '__invalid__';
     const username =
       typeof payload.username === 'string'
         ? normalizeUsername(payload.username)
@@ -543,7 +548,7 @@ export class OidcService {
       typeof payload.name === 'string' ? payload.name.trim().slice(0, 120) : '';
     if (
       typeof payload.active !== 'boolean' ||
-      (role !== null && !PANEL_ROLES.includes(String(role))) ||
+      (role !== null && !PANEL_ROLES.includes(role)) ||
       !isValidUsername(username)
     ) {
       throw new BadRequestException('token yaroqsiz');
@@ -638,6 +643,20 @@ export class OidcService {
     if (!user) throw new NotFoundException();
     // O'chirilgan xodimning parolini yangilash shart emas
     if (user.isDeleted) return;
+    // 5.2: superadmin filialga faqat login serveri orqali (ikki bosqichli kod bilan) kiradi -
+    // zaxira paroli saqlanmaydi (avval saqlangan bo'lsa ham o'chiriladi)
+    if (user.type === 'SUPERADMIN') {
+      if (user.hashedPassword) {
+        await this.userRepository.update(
+          { id: user.id },
+          { hashedPassword: '' },
+        );
+      }
+      this.logger.warn(
+        `Superadmin uchun zaxira parol qabul qilinmadi: user ${user.id}`,
+      );
+      return;
+    }
     await this.userRepository.update(
       { id: user.id },
       { hashedPassword: payload.pwh },

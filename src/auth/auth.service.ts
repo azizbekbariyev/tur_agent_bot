@@ -177,6 +177,13 @@ export class AuthService {
       throw new UnauthorizedException("Login yoki parol noto'g'ri");
     }
     this.assertActive(user);
+    // 5.2: superadmin filialdagi zaxira kirishdan foydalana olmaydi - faqat "Travance orqali kirish"
+    // (login serverida ikki bosqichli kod). Parol to'g'ri bo'lsa ham.
+    if (user.type === 'SUPERADMIN') {
+      throw new ForbiddenException(
+        'Superadmin faqat "Travance orqali kirish" tugmasi bilan kiradi',
+      );
+    }
 
     await this.openSession(user, req, res);
     return {
