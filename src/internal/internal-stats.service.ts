@@ -7,13 +7,16 @@ import { CashService } from '../cash/cash.service';
 import { PartnersService } from '../partners/partners.service';
 import {
   ACTIVE_STATUS_SQL,
+  getBrutto,
+  getDebt,
+  getPaidAmount,
   PARTICIPANTS_SQL,
   PART_TOURISTS_SQL,
   SHARE_SQL,
   BRUTTO_UZS_SQL,
   PROFIT_SQL,
 } from '../cash/cash.utils';
-import { previousPeriod } from '../common/date';
+import { previousPeriod, tashkentDate } from '../common/date';
 import { UserReq } from '../types/user.type';
 
 /**
@@ -434,6 +437,100 @@ export class InternalStatsService {
         profit: x.profit,
         profitPct: x.profitPct,
       })),
+    };
+  }
+
+  /**
+   * 5.4 (8.5 Qarzlar): mijozlar qarzi (har qarzli kassa) va hamkorlarga qarz. Hozirgi holat; ixtiyoriy
+   * start/end - faqat "kassa qaysi oyda ochilgan" filtri. Mijoz qarzi qoidasi 8.1 dagi "Mijozlar qarzi"
+   * kartasi bilan bir xil (faol kassalar, getDebt > 0) - ro'yxat jami kartaga teng.
+   * MAXFIYLIK: mijozning faqat familiya-ismi (birinchi yo'lovchi); telefon, pasport, mijoz ID yo'q.
+   */
+  async debts(q: Partial<StatsQuery>) {
+    let start: Date | null = null;
+    let end: Date | null = null;
+    if (q.start || q.end)
+      ({ start, end } = this.parse({
+        ...q,
+        lowProfitPct: undefined,
+      }));
+    const qb = this.cashRepository
+      .createQueryBuilder('c')
+      .leftJoinAndSelect('c.brutto', 'b')
+      .leftJoinAndSelect('c.moneys', 'm')
+      .leftJoinAndSelect('c.passengers', 'p')
+      .leftJoinAndSelect('c.user', 'u')
+      .leftJoinAndSelect('c.additionalUser', 'au')
+      .where('c.is_deleted = false')
+      .andWhere(ACTIVE_STATUS_SQL);
+    if (start && end)
+      qb.andWhere('c.created_at BETWEEN :s AND :e', { s: start, e: end });
+    const cashes = await qb.getMany();
+    const person = (
+      u?: { firstName?: string; lastName?: string | null } | null,
+    ) => (u ? `${u.firstName ?? ''} ${u.lastName ?? ''}`.trim() : null);
+    const today = tashkentDate(new Date());
+    const dayMs = 86_400_000;
+    const clients = cashes
+      .map((c) => ({ c, debt: getDebt(c) }))
+      .filter((x) => x.debt > 0)
+      .map(({ c, debt }) => {
+        const p = [...(c.passengers ?? [])].sort((a, b) => a.id - b.id)[0];
+        const departure = c.departure_date
+          ? tashkentDate(c.departure_date)
+          : null;
+        return {
+          id: c.id,
+          seqNo: c.seq_no,
+          cashNumber: c.cash_number,
+          client: p ? `${p.lastName ?? ''} ${p.firstName ?? ''}`.trim() : null,
+          destination: c.destination ?? '',
+          createdAt: c.created_at,
+          departureDate: departure,
+          // > 0 - uchishiga N kun; 0 - bugun; < 0 - uchib ketgan (N kun oldin)
+          daysToDeparture: departure
+            ? Math.round((Date.parse(departure) - Date.parse(today)) / dayMs)
+            : null,
+          brutto: round(getBrutto(c)),
+          paid: round(getPaidAmount(c)),
+          debt: round(debt),
+          employee: person(c.user),
+          additionalEmployee: person(c.additionalUser),
+          status: c.status,
+        };
+      })
+      .sort((a, b) => (a.daysToDeparture ?? 1e9) - (b.daysToDeparture ?? 1e9));
+    const partner = await this.partnersService.balance({});
+    const partners = partner.items
+      .map((i) => ({
+        id: i.partnerId,
+        name: i.name,
+        remaining: num(i.remaining),
+      }))
+      .filter((i) => i.remaining !== 0)
+      .map((i) => ({
+        id: i.id,
+        name: i.name,
+        debt: round(Math.max(i.remaining, 0)),
+        advance: round(Math.max(-i.remaining, 0)),
+      }))
+      .sort((a, b) => b.debt - a.debt || b.advance - a.advance);
+    return {
+      generatedAt: new Date().toISOString(),
+      createdFilter:
+        start && end
+          ? { start: start.toISOString(), end: end.toISOString() }
+          : null,
+      clients,
+      partners,
+      totals: {
+        clientDebt: round(clients.reduce((a, x) => a + x.debt, 0)),
+        clientCashes: clients.length,
+        overdueCashes: clients.filter((x) => (x.daysToDeparture ?? 1) < 0)
+          .length,
+        partnerDebt: round(partners.reduce((a, x) => a + x.debt, 0)),
+        partnerAdvance: round(partners.reduce((a, x) => a + x.advance, 0)),
+      },
     };
   }
 }

@@ -20,6 +20,17 @@ export class InternalStatsController {
     private readonly stats: InternalStatsService,
   ) {}
 
+  /** 5.4 (8.5): qarzlar - mijozlar (faqat ism-familiya) va hamkorlar */
+  @Get('debts')
+  @Header('Cache-Control', 'no-store')
+  async getDebts(
+    @Headers('authorization') authorization: string | undefined,
+    @Query() query: Partial<StatsQuery>,
+  ) {
+    await this.oidc.verifyServiceToken(authorization, STATS_TOKEN_TYP);
+    return this.stats.debts(query);
+  }
+
   @Get('stats')
   @Header('Cache-Control', 'no-store')
   async getStats(
