@@ -60,8 +60,11 @@ async function start() {
       new ValidationPipe({ whitelist: true, transform: true }),
     );
 
-    await app.listen(PORT, () => {
-      console.log(`🚀 Server started at http://localhost:${PORT}/api`);
+    // HOST=127.0.0.1 - faqat shu serverning o'zidan (nginx orqali); 3000/3001 internetga ochilmaydi.
+    // Berilmasa avvalgidek barcha interfeyslarda (0.0.0.0).
+    const HOST = process.env.HOST || '0.0.0.0';
+    await app.listen(PORT, HOST, () => {
+      console.log(`🚀 Server started at http://${HOST}:${PORT}/api`);
     });
   } catch (error) {
     console.log('❌ Server start error:', error);
