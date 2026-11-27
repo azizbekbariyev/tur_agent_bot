@@ -30,6 +30,14 @@ import { ServiceType } from '../bot/models/service_type';
 import { Brutto } from '../bot/models/brutto';
 import { CashStatusHistory } from '../bot/models/cash_status_history';
 import { UserSession } from '../bot/models/user_session';
+import { InstallmentProvider } from '../bot/models/installment_provider';
+import { PaymentSource } from '../common/contract.constants';
+import { CONTRACT_NUMBER_RE } from '../contracts/contract-number';
+import {
+  assertContractWarningsAcknowledged,
+  contractOfCash,
+  syncContractAfterCashChange,
+} from '../contracts/contract-hooks';
 import { revokeUserSessions } from '../auth/sessions';
 import { isValidUsername, normalizeUsername } from '../common/username';
 import { CashNotificationService } from './cash-notification.service';
@@ -178,7 +186,7 @@ const COUNT_STATUSES = [
 const CASH_RELATIONS = {
   cashServices: { service: { serviceType: true } },
   passengers: true,
-  moneys: true,
+  moneys: { provider: true },
   user: true,
   additionalUser: true,
   brutto: true,
@@ -232,8 +240,16 @@ const moneyText = (m: {
   currency: string;
   currency_amount: number | string;
   type: string;
+  provider?: { name?: string } | null;
 }) =>
-  `${num(m.money_received)} ${m.currency}${m.currency !== 'UZS' ? ` × ${num(m.currency_amount)}` : ''} / ${m.type}`;
+  `${num(m.money_received)} ${m.currency}${m.currency !== 'UZS' ? ` × ${num(m.currency_amount)}` : ''} / ${m.type}${m.provider?.name ? ` (${m.provider.name})` : ''}`;
+
+/** Shu holatlarga o'tishda kassada kamida 1 xizmat bo'lishi shart (yaratishdagi qoida bilan bir xil) */
+const NEEDS_SERVICES_STATUSES: string[] = [
+  'pending_approval',
+  'approved',
+  'closed',
+];
 
 @Injectable()
 export class CashService {
@@ -1148,18 +1164,47 @@ export class CashService {
 
   async createCash(user: UserReq, body: CreateCashDto) {
     requireCashWriter(user);
-    if (!body.brutto) {
-      throw new BadRequestException(
-        'Kelishilgan narx (brutto) kiritilishi shart',
-      );
-    }
     if (!body.services?.length) {
       throw new BadRequestException('Kamida bitta xizmat tanlanishi shart');
     }
     // Dogovor raqami: bo'sh bo'lsa "0" (dogovor hali berilmagan)
     const cashNumber = body.cash_number?.trim() || '0';
+    this.assertManualCashNumber(cashNumber);
     await this.assertCashNumberFree(cashNumber);
 
+    const created = await this.dataSource.transaction((manager) =>
+      this.createCashInTx(manager, user, body, { cashNumber }),
+    );
+    await this.afterCashCreated(created, body.status);
+    return this.getCash(user, created.id);
+  }
+
+  /**
+   * Kassa yaratishning o'zi - chaqiruvchining tranzaksiyasi ICHIDA. «+ Yangi kassa» (createCash) va
+   * «+ Yangi shartnoma» (ContractsService) shu yerdan o'tadi: brutto, netto, xizmatlar, to'lovlar,
+   * yo'lovchilar, holat tarixi bir xil yoziladi. Xizmatlar ro'yxati bo'sh bo'lishi mumkin - faqat
+   * shartnomadan ochilgan Qoralama uchun (createCash bo'sh ro'yxatni o'zi rad etadi).
+   */
+  async createCashInTx(
+    manager: EntityManager,
+    user: UserReq,
+    body: CreateCashDto,
+    opts: {
+      cashNumber: string;
+      moneySource?: PaymentSource;
+      /**
+       * Shartnomali kassa: turistlar soni alohida maydondan (yo'lovchilar keyin kiritilishi mumkin).
+       * Berilmasa - mavjud qoida: yo'lovchilar bo'lsa ularning soni (shartnomasiz kassalar o'zgarmaydi).
+       */
+      touristCount?: number;
+    },
+  ): Promise<Cash> {
+    requireCashWriter(user);
+    if (!body.brutto) {
+      throw new BadRequestException(
+        'Kelishilgan narx (brutto) kiritilishi shart',
+      );
+    }
     const createdAt = body.created_at
       ? parseCashDate(body.created_at)
       : undefined;
@@ -1174,56 +1219,60 @@ export class CashService {
       await this.assertActiveUser(body.additional_user_id);
     }
 
-    const created = await this.dataSource.transaction(async (manager) => {
-      const serviceIds = [...new Set(body.services.map((s) => s.service_id))];
-      const foundServices = await manager
-        .getRepository(Service)
-        .find({ where: { id: In(serviceIds) } });
-      if (foundServices.length !== serviceIds.length) {
-        throw new BadRequestException('Tanlangan xizmatlardan biri topilmadi');
-      }
+    const services = body.services ?? [];
+    const serviceIds = [...new Set(services.map((s) => s.service_id))];
+    const foundServices = serviceIds.length
+      ? await manager
+          .getRepository(Service)
+          .find({ where: { id: In(serviceIds) } })
+      : [];
+    if (foundServices.length !== serviceIds.length) {
+      throw new BadRequestException('Tanlangan xizmatlardan biri topilmadi');
+    }
 
-      const netto = roundToNearestThousand(
-        body.services.reduce(
-          (sum, s) =>
-            sum +
-            toUZS(
-              s.service_amount,
-              s.currency,
-              rateOf(s.currency, s.currency_amount),
-            ),
-          0,
-        ),
-      );
+    const netto = roundToNearestThousand(
+      services.reduce(
+        (sum, s) =>
+          sum +
+          toUZS(
+            s.service_amount,
+            s.currency,
+            rateOf(s.currency, s.currency_amount),
+          ),
+        0,
+      ),
+    );
 
-      const brutto = await manager.getRepository(Brutto).save({
-        amount: body.brutto.amount.toFixed(2),
-        currency: body.brutto.currency,
-        currency_amount: rateOf(
-          body.brutto.currency,
-          body.brutto.currency_amount,
-        ),
-      });
+    const brutto = await manager.getRepository(Brutto).save({
+      amount: body.brutto.amount.toFixed(2),
+      currency: body.brutto.currency,
+      currency_amount: rateOf(
+        body.brutto.currency,
+        body.brutto.currency_amount,
+      ),
+    });
 
-      const cash = await manager.getRepository(Cash).save({
-        cash_number: cashNumber,
-        destination: body.destination,
-        departure_date: body.departure_date,
-        return_date: body.return_date,
-        comment: body.comment,
-        turist_count: body.passengers?.length || body.turist_count,
-        status: body.status,
-        netto: netto.toFixed(2),
-        user: { id: user.id },
-        brutto: { id: brutto.id },
-        ...(createdAt ? { created_at: createdAt } : {}),
-        ...(body.additional_user_id
-          ? { additionalUser: { id: body.additional_user_id } }
-          : {}),
-      });
+    const cash = await manager.getRepository(Cash).save({
+      cash_number: opts.cashNumber,
+      destination: body.destination,
+      departure_date: body.departure_date,
+      return_date: body.return_date,
+      comment: body.comment,
+      turist_count:
+        opts.touristCount ?? (body.passengers?.length || body.turist_count),
+      status: body.status,
+      netto: netto.toFixed(2),
+      user: { id: user.id },
+      brutto: { id: brutto.id },
+      ...(createdAt ? { created_at: createdAt } : {}),
+      ...(body.additional_user_id
+        ? { additionalUser: { id: body.additional_user_id } }
+        : {}),
+    });
 
+    if (services.length) {
       await manager.getRepository(CashServices).save(
-        body.services.map((s) => ({
+        services.map((s) => ({
           code: s.code,
           service_amount: s.service_amount,
           currency: s.currency,
@@ -1232,48 +1281,108 @@ export class CashService {
           service: { id: s.service_id },
         })),
       );
+    }
 
-      if (body.moneys?.length) {
-        await manager.getRepository(Money).save(
-          body.moneys.map((m) => ({
-            money_received: m.money_received,
-            currency: m.currency,
-            currency_amount: rateOf(m.currency, m.currency_amount),
-            type: m.type,
-            cash: { id: cash.id },
-          })),
+    if (body.moneys?.length) {
+      const rows: Partial<Money>[] = [];
+      for (const m of body.moneys) {
+        const provider = await this.resolveProvider(
+          manager,
+          m.type,
+          m.provider_id,
         );
+        rows.push({
+          money_received: m.money_received,
+          currency: m.currency,
+          currency_amount: rateOf(m.currency, m.currency_amount),
+          type: m.type,
+          provider,
+          source: opts.moneySource ?? 'manual',
+          cash: { id: cash.id } as Cash,
+        });
       }
+      await manager.getRepository(Money).save(rows);
+    }
 
-      if (body.passengers?.length) {
-        const passengers = await manager.getRepository(Passenger).save(
-          body.passengers.map((p) => ({
-            firstName: p.firstName.trim(),
-            lastName: p.lastName?.trim(),
-            phoneNumber: p.phoneNumber?.trim() || undefined,
-            cash: { id: cash.id },
-          })),
-        );
-        await linkPassengersToClients(manager, passengers);
-      }
+    if (body.passengers?.length) {
+      const passengers = await manager.getRepository(Passenger).save(
+        body.passengers.map((p) => ({
+          firstName: p.firstName.trim(),
+          lastName: p.lastName?.trim(),
+          phoneNumber: p.phoneNumber?.trim() || undefined,
+          cash: { id: cash.id },
+        })),
+      );
+      await linkPassengersToClients(manager, passengers);
+    }
 
-      await manager.getRepository(CashStatusHistory).save({
-        status: body.status,
-        cash: { id: cash.id },
-        changedByUser: { id: user.id },
-      });
-
-      return cash;
+    await manager.getRepository(CashStatusHistory).save({
+      status: body.status,
+      cash: { id: cash.id },
+      changedByUser: { id: user.id },
     });
 
-    // Transaction TASHQARISIDA - xabar sekin ketsa ham transaction ochiq qolmaydi
-    if (body.status === CashStatus.PENDING_APPROVAL) {
+    return cash;
+  }
+
+  /** Kassa yaratilgandan keyin - tranzaksiya TASHQARISIDA (xabar sekin ketsa ham tranzaksiya ochiq qolmaydi) */
+  async afterCashCreated(created: Cash, status: CashStatus) {
+    if (status === CashStatus.PENDING_APPROVAL) {
       await this.cashNotificationService.notifyAdmins(
         `Yangi kassa ${cashLabel(created)} yaratildi va tasdiqlashga yuborildi`,
       );
     }
+  }
 
-    return this.getCash(user, created.id);
+  /**
+   * «Bo'lib to'lash» - faqat faol provayder bilan; boshqa turlarda provayder yozilmaydi.
+   * keepId - tahrirlanayotgan to'lovning hozirgi provayderi (keyin nofaol qilingan bo'lsa ham qoladi).
+   */
+  private async resolveProvider(
+    manager: EntityManager,
+    type: string,
+    providerId?: number | null,
+    keepId?: number | null,
+  ): Promise<InstallmentProvider | null> {
+    if (type !== 'INSTALLMENT') return null;
+    if (!providerId) {
+      throw new BadRequestException(
+        "Bo'lib to'lash uchun bank yoki muddatli to'lov tizimini tanlang",
+      );
+    }
+    const provider = await manager
+      .getRepository(InstallmentProvider)
+      .findOne({ where: { id: providerId } });
+    if (!provider || (!provider.isActive && provider.id !== keepId)) {
+      throw new BadRequestException(
+        "Tanlangan bank / muddatli to'lov tizimi topilmadi",
+      );
+    }
+    return provider;
+  }
+
+  /** Shartnoma formatidagi raqam (A000014) faqat shartnomadan beriladi - qo'lda yozilmaydi */
+  private assertManualCashNumber(cashNumber: string) {
+    if (CONTRACT_NUMBER_RE.test(cashNumber.trim())) {
+      throw new BadRequestException(
+        "Bu ko'rinishdagi raqam (harf + 6 xona) shartnomadan avtomatik beriladi — «+ Yangi shartnoma» orqali tuzing",
+      );
+    }
+  }
+
+  /** Qoralamadan keyingi holatlarga kassa kamida 1 xizmat bilan o'tadi */
+  private async assertHasServices(
+    manager: EntityManager,
+    cashId: number,
+    nextStatus: string,
+  ) {
+    if (!NEEDS_SERVICES_STATUSES.includes(nextStatus)) return;
+    const count = await manager
+      .getRepository(CashServices)
+      .count({ where: { cash: { id: cashId } } });
+    if (!count) {
+      throw new BadRequestException('Kamida bitta xizmat tanlanishi shart');
+    }
   }
 
   async getCash(user: UserReq, id: number) {
@@ -1290,37 +1399,9 @@ export class CashService {
   async createPaymant(user: UserReq, id: number, body: CreatePaymantDto) {
     requireCashWriter(user);
     const cash = await this.findVisibleCash(user, id, { brutto: true });
-    if (cash.status === 'cancelled') {
-      throw new BadRequestException(
-        "Bekor qilingan kassaga to'lov qo'shilmaydi",
-      );
-    }
-    const reviewAgain = needsReviewAgain(user, cash.status);
-
-    await this.dataSource.transaction(async (manager) => {
-      const money = await manager.getRepository(Money).save({
-        type: body.type,
-        money_received: body.amount,
-        currency: body.currency,
-        currency_amount: rateOf(body.currency, body.currency_amount),
-        cash: { id },
-      });
-      await manager.getRepository(History).save({
-        name: 'money',
-        old_column: '',
-        new_column: `${moneyText(money)}${body.comment?.trim() ? ` — ${body.comment.trim()}` : ''}`,
-        user: { id: user.id },
-        cash: { id },
-      });
-      if (reviewAgain) {
-        await this.sendBackToReview(
-          manager,
-          cash,
-          user,
-          "Xodim to'lov qo'shdi",
-        );
-      }
-    });
+    const { reviewAgain } = await this.dataSource.transaction((manager) =>
+      this.addPaymentInTx(manager, user, cash, body, 'manual'),
+    );
     if (reviewAgain) await this.notifyReviewAgain(cash);
 
     cash.moneys = await this.moneyRepository.find({ where: { cash: { id } } });
@@ -1328,6 +1409,53 @@ export class CashService {
       paidAmount: getPaidAmount(cash),
       debt: getDebt(cash),
     };
+  }
+
+  /**
+   * To'lov qo'shishning o'zi - chaqiruvchining tranzaksiyasi ICHIDA. Kassadagi «To'lov» oynasi
+   * (createPaymant) va yangi shartnoma yaratish shu yerdan o'tadi: «Tarix»ga yoziladi, xodim
+   * tasdiqlangan/yopilgan kassaga qo'shsa - qayta tekshiruvga qaytadi (xabar - chaqiruvchida, tranzaksiyadan keyin).
+   * cash - ko'rinish huquqi tekshirilgan kassa (status bilan).
+   */
+  async addPaymentInTx(
+    manager: EntityManager,
+    user: UserReq,
+    cash: Cash,
+    body: CreatePaymantDto,
+    source: PaymentSource,
+  ): Promise<{ money: Money; reviewAgain: boolean }> {
+    requireCashWriter(user);
+    if (cash.status === 'cancelled') {
+      throw new BadRequestException(
+        "Bekor qilingan kassaga to'lov qo'shilmaydi",
+      );
+    }
+    const reviewAgain = needsReviewAgain(user, cash.status);
+    const provider = await this.resolveProvider(
+      manager,
+      body.type,
+      body.provider_id,
+    );
+    const money = await manager.getRepository(Money).save({
+      type: body.type,
+      money_received: body.amount,
+      currency: body.currency,
+      currency_amount: rateOf(body.currency, body.currency_amount),
+      provider,
+      source,
+      cash: { id: cash.id },
+    });
+    await manager.getRepository(History).save({
+      name: 'money',
+      old_column: '',
+      new_column: `${moneyText(money)}${body.comment?.trim() ? ` — ${body.comment.trim()}` : ''}`,
+      user: { id: user.id },
+      cash: { id: cash.id },
+    });
+    if (reviewAgain) {
+      await this.sendBackToReview(manager, cash, user, "Xodim to'lov qo'shdi");
+    }
+    return { money, reviewAgain };
   }
 
   async updateCash(user: UserReq, id: number, body: UpdateCashDto) {
@@ -1374,6 +1502,13 @@ export class CashService {
         cashNumber !== undefined &&
         cashNumber !== (cash.cash_number ?? '').trim()
       ) {
+        // Shartnomasi bor kassada raqam shartnomadan - qo'lda o'zgarmaydi
+        if (await contractOfCash(manager, id)) {
+          throw new BadRequestException(
+            "Shartnomasi bor kassada dogovor raqamini o'zgartirib bo'lmaydi",
+          );
+        }
+        this.assertManualCashNumber(cashNumber);
         await this.assertCashNumberFree(cashNumber, id, manager);
       }
 
@@ -1529,21 +1664,35 @@ export class CashService {
       }
 
       for (const m of body.moneys ?? []) {
+        const before = m.id
+          ? await moneyRepo.findOne({
+              where: { id: m.id, cash: { id } },
+              relations: { provider: true },
+            })
+          : null;
+        if (m.id && !before) {
+          throw new NotFoundException(`To'lov #${m.id} topilmadi`);
+        }
         const values = {
           money_received: m.money_received,
           type: m.type,
           currency: m.currency,
           currency_amount: rateOf(m.currency, m.currency_amount),
+          provider: await this.resolveProvider(
+            manager,
+            m.type,
+            m.provider_id,
+            before?.provider?.id,
+          ),
         };
-        if (m.id) {
-          const before = await moneyRepo.findOne({
-            where: { id: m.id, cash: { id } },
-          });
-          if (!before) throw new NotFoundException(`To'lov #${m.id} topilmadi`);
-          await moneyRepo.update({ id: m.id }, values);
+        if (before) {
+          // Manba (qo'lda / shartnoma yaratilganda) tahrirda o'zgarmaydi
+          await moneyRepo.update({ id: before.id }, values);
           pushHistory('money', moneyText(before), moneyText(values));
         } else {
-          await moneyRepo.save(moneyRepo.create({ ...values, cash: { id } }));
+          await moneyRepo.save(
+            moneyRepo.create({ ...values, source: 'manual', cash: { id } }),
+          );
           pushHistory('money', '', moneyText(values));
         }
       }
@@ -1609,8 +1758,12 @@ export class CashService {
       const finalServices = await cashServicesRepo.find({
         where: { cash: { id } },
       });
-      const touristCount =
-        finalPassengers || (body.turist_count ?? cash.turist_count);
+      // Shartnomali kassa: turistlar soni alohida (yo'lovchilar keyin qo'shilishi mumkin), lekin kiritilgan
+      // yo'lovchilardan kam bo'lmaydi. Shartnomasiz kassa: mavjud qoida (yo'lovchilar bo'lsa - ularning soni).
+      const hasContract = !!(await contractOfCash(manager, id));
+      const touristCount = hasContract
+        ? Math.max(body.turist_count ?? cash.turist_count, finalPassengers)
+        : finalPassengers || (body.turist_count ?? cash.turist_count);
       const netto = roundToNearestThousand(
         finalServices.reduce(
           (sum, cs) =>
@@ -1619,6 +1772,14 @@ export class CashService {
           0,
         ),
       ).toFixed(2);
+      if (statusChanged) {
+        if (
+          NEEDS_SERVICES_STATUSES.includes(String(body.status)) &&
+          !finalServices.length
+        ) {
+          throw new BadRequestException('Kamida bitta xizmat tanlanishi shart');
+        }
+      }
       pushHistory('turist_count', cash.turist_count, touristCount);
       pushHistory('netto', num(cash.netto), num(netto));
       patch.turist_count = touristCount;
@@ -1674,6 +1835,18 @@ export class CashService {
         await this.sendBackToReview(manager, cash, user, 'Xodim tahrirladi');
       }
 
+      // Shartnoma: ogohlantirishlar (yangi holat bilan, saqlangan xizmatlar bo'yicha) va «O'zgargan»/«Bekor»
+      if (statusChanged) {
+        await assertContractWarningsAcknowledged(manager, {
+          cashId: id,
+          nextStatus: String(body.status),
+          acknowledged: body.acknowledge_contract_warnings,
+          userId: user.id,
+          role: user.role,
+        });
+      }
+      await syncContractAfterCashChange(manager, id, user.id);
+
       return { cash, oldStatus, statusChanged, sentBack };
     });
 
@@ -1694,6 +1867,14 @@ export class CashService {
 
     const comment = body.comment?.trim() || null;
     await this.dataSource.transaction(async (manager) => {
+      await this.assertHasServices(manager, id, body.status);
+      await assertContractWarningsAcknowledged(manager, {
+        cashId: id,
+        nextStatus: body.status,
+        acknowledged: body.acknowledge_contract_warnings,
+        userId: user.id,
+        role: user.role,
+      });
       await manager
         .getRepository(Cash)
         .update({ id }, { status: body.status, updated_at: new Date() });
@@ -1710,6 +1891,7 @@ export class CashService {
         cash: { id },
         changedByUser: { id: user.id },
       });
+      await syncContractAfterCashChange(manager, id, user.id);
     });
 
     await this.notifyStatusChange(

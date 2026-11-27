@@ -14,6 +14,9 @@ describe('xizmat turlari tarjimasi', () => {
     expect(serviceTypeKey('Страховка')).toBe('insurance');
     expect(serviceTypeKey('Экскурсия')).toBe('excursion');
     expect(serviceTypeKey('Прочее')).toBe('other');
+    // 2-filialda bor: «ВИЗА» va «Тур пакет» (bo'shliq bilan)
+    expect(serviceTypeKey('ВИЗА')).toBe('visa');
+    expect(serviceTypeKey('Тур пакет')).toBe('tour');
   });
 
   it('tanlangan tilda nom, topilmasa asl qiymat', () => {

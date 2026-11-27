@@ -1,4 +1,4 @@
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
   ArrayMaxSize,
   IsArray,
@@ -82,7 +82,103 @@ export class ReminderSettingsDto {
   time?: string;
 }
 
+// ---- Shartnoma shabloni (faqat admin) ----
+const trimList = ({ value }: { value: unknown }) =>
+  Array.isArray(value)
+    ? (value as unknown[])
+        .map((v) => (typeof v === 'string' ? v.trim() : v))
+        .filter((v) => v !== '')
+    : value;
+
+export class LangTextDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  ru?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  uz?: string;
+}
+
+/** Shartlar: faqat trim (bo'sh band tashlanmaydi - SettingsService «bo'sh band» deb xabar beradi) */
+const trimOnly = ({ value }: { value: unknown }) =>
+  Array.isArray(value)
+    ? (value as unknown[]).map((v) => (typeof v === 'string' ? v.trim() : v))
+    : value;
+
+export class LangListDto {
+  @IsOptional()
+  @Transform(trimOnly)
+  @IsArray()
+  @ArrayMaxSize(20)
+  @IsString({ each: true })
+  @MaxLength(1500, { each: true })
+  ru?: string[];
+
+  @IsOptional()
+  @Transform(trimOnly)
+  @IsArray()
+  @ArrayMaxSize(20)
+  @IsString({ each: true })
+  @MaxLength(1500, { each: true })
+  uz?: string[];
+}
+
+export class ContractListsDto {
+  @IsOptional()
+  @Transform(trimList)
+  @IsArray()
+  @ArrayMaxSize(50)
+  @IsString({ each: true })
+  @MaxLength(100, { each: true })
+  airlines?: string[];
+
+  @IsOptional()
+  @Transform(trimList)
+  @IsArray()
+  @ArrayMaxSize(50)
+  @IsString({ each: true })
+  @MaxLength(50, { each: true })
+  baggage?: string[];
+
+  @IsOptional()
+  @Transform(trimList)
+  @IsArray()
+  @ArrayMaxSize(50)
+  @IsString({ each: true })
+  @MaxLength(100, { each: true })
+  roomTypes?: string[];
+}
+
+export class ContractTemplateDto {
+  @IsOptional()
+  @IsIn(['ru', 'uz'])
+  receiptLang?: 'ru' | 'uz';
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => LangTextDto)
+  warning?: LangTextDto;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => LangListDto)
+  terms?: LangListDto;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => ContractListsDto)
+  lists?: ContractListsDto;
+}
+
 export class UpdateSettingsDto {
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => ContractTemplateDto)
+  contract?: ContractTemplateDto;
+
   @IsOptional()
   @ValidateNested()
   @Type(() => BrandSettingsDto)

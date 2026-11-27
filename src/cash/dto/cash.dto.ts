@@ -34,11 +34,31 @@ export enum Currency {
   EUR = 'EUR',
 }
 
+// Hamkorlarga to'lov turlari (partner_payment) - o'zgarmagan
 export enum PaymentType {
   CASH = 'CASH',
   CARD = 'CARD',
   TRANSFER = 'TRANSFER',
 }
+
+// Mijozdan to'lov turlari (money). Qiymatlar common/contract.constants.ts PAYMENT_TYPES bilan bir xil
+export enum MoneyPaymentType {
+  CASH = 'CASH',
+  CARD_TRANSFER = 'CARD_TRANSFER',
+  INSTALLMENT = 'INSTALLMENT',
+  BANK_ACCOUNT = 'BANK_ACCOUNT',
+  TERMINAL = 'TERMINAL',
+}
+
+/**
+ * Eski frontend bilan moslik (chiqarish paytida brauzerda eski sahifa ochiq qolishi mumkin):
+ * eski CARD va TRANSFER faqat KIRISHDA CARD_TRANSFER ga o'giriladi, bazaga eski qiymat yozilmaydi.
+ * Migratsiya Shartnoma1764000000000 dagi o'tkazish qoidasi bilan bir xil.
+ */
+export const legacyMoneyType = (value: unknown): unknown =>
+  value === 'CARD' || value === 'TRANSFER'
+    ? MoneyPaymentType.CARD_TRANSFER
+    : value;
 
 export enum UserRole {
   SUPERADMIN = 'SUPERADMIN',
@@ -200,8 +220,14 @@ export class MoneyItemDto {
   @IsPositive()
   money_received!: number;
 
-  @IsEnum(PaymentType)
-  type!: PaymentType;
+  @Transform(({ value }) => legacyMoneyType(value))
+  @IsEnum(MoneyPaymentType)
+  type!: MoneyPaymentType;
+
+  // Faqat «Bo'lib to'lash» (INSTALLMENT) uchun: bank / muddatli to'lov tizimi
+  @IsOptional()
+  @IsInt()
+  provider_id?: number | null;
 
   @IsEnum(Currency)
   currency!: Currency;
@@ -291,8 +317,14 @@ export class CreatePaymantDto {
   @IsEnum(Currency)
   currency!: Currency;
 
-  @IsEnum(PaymentType)
-  type!: PaymentType;
+  @Transform(({ value }) => legacyMoneyType(value))
+  @IsEnum(MoneyPaymentType)
+  type!: MoneyPaymentType;
+
+  // Faqat «Bo'lib to'lash» (INSTALLMENT) uchun: bank / muddatli to'lov tizimi
+  @IsOptional()
+  @IsInt()
+  provider_id?: number | null;
 
   // YANGI: to'lov qo'shishda ham shu to'lovga xos kurs kerak
   @IsNumber()
@@ -366,8 +398,14 @@ export class UpdateMoneyDto {
   @IsEnum(Currency)
   currency!: Currency;
 
-  @IsEnum(PaymentType)
-  type!: PaymentType;
+  @Transform(({ value }) => legacyMoneyType(value))
+  @IsEnum(MoneyPaymentType)
+  type!: MoneyPaymentType;
+
+  // Faqat «Bo'lib to'lash» (INSTALLMENT) uchun: bank / muddatli to'lov tizimi
+  @IsOptional()
+  @IsInt()
+  provider_id?: number | null;
 
   @IsNumber()
   currency_amount!: number;
@@ -420,6 +458,10 @@ export class UpdateCashDto {
   status?: CashStatus;
 
   @IsOptional()
+  @IsBoolean()
+  acknowledge_contract_warnings?: boolean;
+
+  @IsOptional()
   @IsInt()
   turist_count?: number;
 
@@ -469,6 +511,11 @@ export class UpdateCashStatusDto {
   @IsOptional()
   @IsString()
   comment?: string;
+
+  // Shartnoma bilan solishtirishda ogohlantirish bor - foydalanuvchi ko'rib, davom etishni tanladi
+  @IsOptional()
+  @IsBoolean()
+  acknowledge_contract_warnings?: boolean;
 }
 
 export class UpdateCashEmployeeBonusDto {

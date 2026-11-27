@@ -19,6 +19,9 @@ import { TimestampsWithTimeZone1761955300000 } from './migrations/1761955300000-
 import { CashSeqNo1761955400000 } from './migrations/1761955400000-CashSeqNo';
 import { UserUsername1762600000000 } from './migrations/1762600000000-UserUsername';
 import { SessionOidcSid1762700000000 } from './migrations/1762700000000-SessionOidcSid';
+import { Shartnoma1764000000000 } from './migrations/1764000000000-Shartnoma';
+import { ContractVersionToken1764100000000 } from './migrations/1764100000000-ContractVersionToken';
+import { ContractsModule } from './contracts/contracts.module';
 import { botEnabled } from './common/flags';
 import { HealthController } from './health.controller';
 
@@ -52,6 +55,8 @@ import { HealthController } from './health.controller';
         CashSeqNo1761955400000,
         UserUsername1762600000000,
         SessionOidcSid1762700000000,
+        Shartnoma1764000000000,
+        ContractVersionToken1764100000000,
       ],
       migrationsRun: true,
       synchronize: true,
@@ -68,6 +73,7 @@ import { HealthController } from './health.controller';
     InternalModule,
     ClientsModule,
     ReportsModule,
+    ContractsModule,
   ],
   controllers: [HealthController],
   providers: [],

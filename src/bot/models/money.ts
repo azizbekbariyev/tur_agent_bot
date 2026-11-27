@@ -1,4 +1,5 @@
 import {
+  Check,
   Column,
   Entity,
   JoinColumn,
@@ -6,7 +7,17 @@ import {
   PrimaryGeneratedColumn,
 } from 'typeorm';
 import { Cash } from './cash';
+import { InstallmentProvider } from './installment_provider';
+import {
+  PAYMENT_SOURCES,
+  PAYMENT_TYPES,
+} from '../../common/contract.constants';
 
+// Bo'lib to'lashda provayder majburiy, boshqa turlarda bo'lmaydi
+@Check(
+  'CHK_money_installment_provider',
+  `("type" = 'INSTALLMENT') = ("provider_id" IS NOT NULL)`,
+)
 @Entity('money')
 export class Money {
   @PrimaryGeneratedColumn()
@@ -23,9 +34,10 @@ export class Money {
   })
   money_received!: number;
 
+  // Avval CASH / CARD / TRANSFER edi; migratsiya Shartnoma1764000000000 CARD va TRANSFER ni CARD_TRANSFER ga o'tkazdi
   @Column({
     type: 'enum',
-    enum: ['CASH', 'CARD', 'TRANSFER'],
+    enum: [...PAYMENT_TYPES],
   })
   type!: string;
 
@@ -35,6 +47,7 @@ export class Money {
   })
   currency!: string;
 
+  // Kurs: 1 USD/EUR = necha so'm (UZS uchun 1). So'mdagi summa saqlanmaydi - money_received × kurs
   @Column({
     type: 'numeric',
     precision: 15,
@@ -49,6 +62,22 @@ export class Money {
   @ManyToOne(() => Cash, (cash) => cash.moneys)
   @JoinColumn({ name: 'cash_id' })
   cash!: Cash;
+
+  // Faqat INSTALLMENT uchun: qaysi bank / muddatli to'lov tizimi
+  @ManyToOne(() => InstallmentProvider, { nullable: true })
+  @JoinColumn({
+    name: 'provider_id',
+    foreignKeyConstraintName: 'FK_money_provider',
+  })
+  provider?: InstallmentProvider | null;
+
+  // manual - kassadagi «To'lov» oynasi; contract_create - yangi shartnoma yaratilganda
+  @Column({
+    type: 'enum',
+    enum: [...PAYMENT_SOURCES],
+    default: 'manual',
+  })
+  source!: string;
 
   @Column({
     type: 'timestamptz',

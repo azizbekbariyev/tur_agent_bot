@@ -30,11 +30,17 @@ export const SERVICE_TYPES = {
     color: '#4FD1A5',
     aliases: ['страховка', 'страхование', "sug'urta", 'sug‘urta', 'sugurta'],
   },
+  visa: {
+    uz: 'Viza',
+    ru: 'Виза',
+    color: '#FB7185',
+    aliases: ['виза', 'визы', 'viza', 'visa'],
+  },
   tour: {
     uz: 'Tur paket',
     ru: 'Тур',
     color: '#F472B6',
-    aliases: ['тур', 'турпакет', 'tur', 'tur paket', 'turpaket'],
+    aliases: ['тур', 'турпакет', 'тур пакет', 'tur', 'tur paket', 'turpaket'],
   },
   excursion: {
     uz: 'Ekskursiya',

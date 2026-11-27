@@ -68,6 +68,20 @@ export type EmployeeStatsQuery = StatsQuery & { accountId?: string };
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/**
+ * Login panelidagi «kassa qoldig'i» guruhlari o'zgarmaydi (Naqd / Karta / O'tkazma) - hamkor to'lovlari
+ * shu 3 turda qoladi. Mijoz to'lovlarining yangi turlari shu guruhlarga tushadi (egasi tasdiqladi, 2026-11-24):
+ * Naqd -> Naqd; Kartaga o'tkazma -> Karta; Terminal, Hisob raqamga o'tkazma, Bo'lib to'lash -> O'tkazma.
+ * Eski «O'tkazma» to'lovlari migratsiyada «Kartaga o'tkazma» bo'lgan - endi «Karta» guruhida.
+ */
+export const MONEY_PANEL_GROUP_SQL = `(CASE m.type::text
+  WHEN 'CASH' THEN 'CASH'
+  WHEN 'CARD_TRANSFER' THEN 'CARD'
+  WHEN 'TERMINAL' THEN 'TRANSFER'
+  WHEN 'BANK_ACCOUNT' THEN 'TRANSFER'
+  WHEN 'INSTALLMENT' THEN 'TRANSFER'
+  ELSE m.type::text END)`;
+
 @Injectable()
 export class InternalStatsService {
   constructor(
@@ -142,7 +156,7 @@ export class InternalStatsService {
               SUM(in_amt) AS "inAmt", SUM(out_amt) AS "outAmt",
               SUM(in_uzs) AS "inUzs", SUM(out_uzs) AS "outUzs"
        FROM (
-         SELECT m.type::text AS type, m.currency::text AS currency, m.money_received AS in_amt, 0 AS out_amt,
+         SELECT ${MONEY_PANEL_GROUP_SQL} AS type, m.currency::text AS currency, m.money_received AS in_amt, 0 AS out_amt,
                 CASE WHEN m.currency = 'UZS' THEN m.money_received ELSE m.money_received * m.currency_amount END AS in_uzs,
                 0 AS out_uzs
          FROM money m
@@ -157,7 +171,7 @@ export class InternalStatsService {
        ORDER BY 1, 2`,
     );
     return rows.map((r) => ({
-      type: r.type, // CASH | CARD | TRANSFER | UNKNOWN
+      type: r.type, // CASH | CARD | TRANSFER | UNKNOWN (mijoz to'lovlari MONEY_PANEL_GROUP_SQL bo'yicha)
       currency: r.currency, // UZS | USD | EUR
       in: Math.round(num(r.inAmt) * 100) / 100,
       out: Math.round(num(r.outAmt) * 100) / 100,

@@ -7,13 +7,12 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import PDFDocument from 'pdfkit';
-import { existsSync } from 'fs';
-import { dirname, join } from 'path';
 import { Cash } from '../bot/models/cash';
 import { BotService } from '../bot/bot.service';
 import { SettingsService, AppSettings } from '../settings/settings.service';
 import { canViewAll, requireCashWriter } from '../common/roles';
 import { tashkentDate } from '../common/date';
+import { fontPath } from '../common/pdf-fonts';
 import { serviceTypeLabel } from '../common/service-types';
 import { UserReq } from '../types/user.type';
 import { VoucherSendDto } from './dto/cash.dto';
@@ -40,7 +39,13 @@ const LABELS = {
     total: 'Umumiy narx',
     paid: "To'langan",
     debt: 'Qoldiq',
-    paymentTypes: { CASH: 'Naqd', CARD: 'Karta', TRANSFER: "O'tkazma" },
+    paymentTypes: {
+      CASH: 'Naqd',
+      CARD_TRANSFER: "Kartaga o'tkazma",
+      INSTALLMENT: "Bo'lib to'lash",
+      BANK_ACCOUNT: "Hisob raqamga o'tkazma",
+      TERMINAL: 'Terminal',
+    },
     caption: 'Sayohatingiz hujjati',
     sum: "so'm",
     noContract: 'Dogovor berilmagan',
@@ -73,7 +78,13 @@ const LABELS = {
     total: 'Общая стоимость',
     paid: 'Оплачено',
     debt: 'Остаток',
-    paymentTypes: { CASH: 'Наличные', CARD: 'Карта', TRANSFER: 'Перевод' },
+    paymentTypes: {
+      CASH: 'Наличные',
+      CARD_TRANSFER: 'Перевод на карту',
+      INSTALLMENT: 'Рассрочка',
+      BANK_ACCOUNT: 'Перевод на расчётный счёт',
+      TERMINAL: 'Терминал',
+    },
     caption: 'Документ вашей поездки',
     sum: 'сум',
     noContract: 'Договор не выдан',
@@ -93,31 +104,6 @@ const LABELS = {
     ],
   },
 } as const;
-
-/** Kirill va lotin harflari uchun TTF shrift (standart PDF shriftlarida kirill yo'q) */
-function fontPath(bold = false): string | null {
-  const file = bold ? 'DejaVuSans-Bold.ttf' : 'DejaVuSans.ttf';
-  const candidates: string[] = [];
-  if (process.env.VOUCHER_FONT_DIR) {
-    candidates.push(join(process.env.VOUCHER_FONT_DIR, file));
-  }
-  try {
-    candidates.push(
-      join(
-        dirname(require.resolve('dejavu-fonts-ttf/package.json')),
-        'ttf',
-        file,
-      ),
-    );
-  } catch {
-    // paket topilmadi - quyidagi yo'llar sinab ko'riladi
-  }
-  candidates.push(
-    join(process.cwd(), 'node_modules/dejavu-fonts-ttf/ttf', file),
-    `/usr/share/fonts/truetype/dejavu/${file}`,
-  );
-  return candidates.find((p) => existsSync(p)) ?? null;
-}
 
 /** '2026-11-07' -> "7 noyabr 2026" / "7 ноября 2026" (Toshkent kuni) */
 const longDate = (value: Date | string, lang: 'uz' | 'ru') => {
